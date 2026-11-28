@@ -62,6 +62,25 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     save(c, [put("src", wide)], origin="external", check=False)
 
 
+def test_declaring_a_card_secret_needs_approval(tmp_path, core_factory):
+    """A declared name receives the value the host keeps, so adding one widens."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    c = core_factory(project_root=root).connect()
+    body = card_json(c, "src")
+    secret = dict(body, secrets=["database_password"])
+    with pytest.raises(RpcFailure) as rejected:
+        save(c, [put("src", secret)], origin="agent", check=True)
+    assert rejected.value.kind == "approval_required"
+    asked = permissions(rejected.value)
+    assert asked == ["secret src database_password"]
+    save(c, [put("src", secret)], approved=asked, origin="agent", check=True)
+    assert card_json(c, "src")["secrets"] == ["database_password"]
+    # Keeping the declaration, or removing it, widens nothing.
+    save(c, [put("src", secret)], origin="agent", check=True)
+    save(c, [put("src", body)], origin="agent", check=True)
+
+
 def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     """External edits cannot bypass approval, including nested Cards and UI reloads."""
     root = tmp_path / "project"

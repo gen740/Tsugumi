@@ -99,13 +99,12 @@ ConversationStore::ProjectStore::ProjectStore(std::filesystem::path p,
 
 ConversationStore::ConversationStore(host::StateGate& g, sql::Db& home,
                                      host::ProjectRegistry& projects,
-                                     Scrub redact, HasGrant grant,
-                                     IsRunning busy, std::string app)
+                                     Scrub redact, IsRunning busy,
+                                     std::string app)
     : gate(g),
       db(home),
       registry(projects),
       scrub(std::move(redact)),
-      has_grant(std::move(grant)),
       is_running(std::move(busy)),
       application(std::move(app)) {
   db.exec(
@@ -299,14 +298,6 @@ auto ConversationStore::RememberResource(const std::string& id,
   q.bind(1, id).bind(2, project).run();
 }
 
-auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
-  for (const auto& resource : Resources(id))
-    if (!has_grant(resource, Tsugumi::Service::Access::Read))
-      throw Failure("permission_denied",
-                    "Historical content belongs to a resource whose "
-                    "permission was revoked");
-}
-
 auto ConversationStore::SaveMessages(const std::string& id,
                                      const std::vector<Message>& messages,
                                      SaveMode mode) -> void {
@@ -419,10 +410,9 @@ auto ConversationStore::BuildConversation(const Conversation& c,
                                    {"isError", q.i64(2) ? "true" : "false"},
                                    {"state", json::Quote(q.text(3))}}));
   auto approvals = db.prepare(
-      "SELECT call,reason,state FROM permission_requests WHERE conversation=? "
-      "AND access=? ORDER BY rowid");
-  approvals.bind(1, c.id).bind(
-      2, static_cast<int>(Tsugumi::Service::Access::CardPermissions));
+      "SELECT call,preview,state FROM decisions WHERE conversation=? "
+      "ORDER BY rowid");
+  approvals.bind(1, c.id);
   while (approvals.step()) {
     auto receipt = ConversationDatabase(c.id).prepare(
         "SELECT result,error FROM receipts WHERE conversation=? AND id=?");
@@ -537,7 +527,6 @@ auto ConversationStore::Create(const A::ConversationCreateRequest& request,
     throw Failure("conflict", "A conversation belongs to its original project");
   if (FindConversationDatabase(id, project)) {
     OwnConversation(id, human);
-    if (!human) AuthorizeHistory(id);
     const auto current = GetConversation(id);
     if (current.project != project)
       throw Failure("conflict",
@@ -570,7 +559,6 @@ auto ConversationStore::List(const A::ConversationListRequest& request,
       if (!human) {
         try {
           OwnConversation(q.text(0), false);
-          AuthorizeHistory(q.text(0));
         } catch (const Failure&) {
           continue;
         }
@@ -596,11 +584,11 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   if (is_running(id))
     throw Failure("busy", "Cancel the conversation before deleting it");
   auto& store = ConversationDatabase(id);
-  // Remove conversation prompts; project grants outlive conversations.
+  // Remove the conversation's provider choice, Skill catalog and decisions.
   {
     sql::Transaction tx(db);
     for (const auto* table :
-         {"providers", "skill_catalogs", "permission_requests"}) {
+         {"providers", "skill_catalogs", "decisions"}) {
       auto q = db.prepare(std::string("DELETE FROM ") + table +
                           " WHERE conversation=?");
       q.bind(1, id).run();
@@ -632,7 +620,6 @@ auto ConversationStore::Events(const A::EventsRequest& request, bool human)
   const auto* p = &request;
   const auto id = p->conversation_id()->str();
   OwnConversation(id, human);
-  if (!human) AuthorizeHistory(id);
   auto q = ConversationDatabase(id).prepare(
       "SELECT seq,json FROM events WHERE conversation=? "
       "AND seq>? ORDER BY seq LIMIT ?");

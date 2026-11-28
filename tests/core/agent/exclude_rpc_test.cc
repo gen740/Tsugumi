@@ -50,19 +50,8 @@ class AgentExclusionRPC : public AgentProjectFixture {
   }
   auto Attach(const std::string& conversation,
               const std::filesystem::path& folder) -> void {
+    (void)conversation;
     RegisterAttached(folder);
-    const auto pending =
-        Tool(conversation, "attached_folder_read",
-             j::Encode(j::Members{{"folder", Quote(folder.string())}}));
-    ASSERT_EQ(pending.Code(), "grant_required");
-    ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                     [&](Builder& b) {
-                       return A::CreateAccessResolveRequest(
-                                  b, b.CreateString(pending.RequestId()), true)
-                           .Union();
-                     })
-                    .Code()
-                    .empty());
   }
   auto CopyAttached(const std::string& conversation,
                     const std::filesystem::path& folder) -> Reply {
@@ -112,9 +101,6 @@ class AgentExclusionRPC : public AgentProjectFixture {
                             {"agentExclude", j::Encode(entries)},
                             {"canvas", R"({"cards":[],"connections":[]})"}}));
     const auto conversation = Conversation("exclusion");
-    for (const auto access :
-         {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write})
-      Grant(conversation, access);
     return conversation;
   }
 };
@@ -140,18 +126,8 @@ TEST_F(AgentExclusionRPC,
   const auto c = Open({".git"});
   EXPECT_EQ(Error(ImportAttached(c, folder)), "permission_denied");
   RegisterAttached(folder);
-  const auto pending = ImportAttached(c, folder);
-  ASSERT_EQ(pending.Code(), "grant_required");
   EXPECT_FALSE(
       std::filesystem::exists(directory.path / "project/externals/imported"));
-  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                   [&](Builder& b) {
-                     return A::CreateAccessResolveRequest(
-                                b, b.CreateString(pending.RequestId()), true)
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
   const auto imported = ImportAttached(c, folder);
   ASSERT_EQ(Error(imported), "") << Diagnostic(imported);
   const auto destination = directory.path / "project";
@@ -547,16 +523,6 @@ TEST_F(AgentExclusionRPC, AttachedAliasesCannotReadOrCopyExcludedSources) {
                   .empty());
   const auto args = j::Encode(
       j::Members{{"folder", Quote(attached.string())}, {"path", Quote("")}});
-  const auto pending = Tool(c, "attached_folder_read", args);
-  ASSERT_EQ(pending.Code(), "grant_required");
-  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                   [&](Builder& b) {
-                     return A::CreateAccessResolveRequest(
-                                b, b.CreateString(pending.RequestId()), true)
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
   EXPECT_EQ(Tool(c, "attached_folder_read", args).View().find("secret.txt"),
             std::string::npos);
   EXPECT_EQ(
@@ -581,9 +547,6 @@ TEST_F(AgentExclusionRPC,
   Write(demo / "secret.txt", "EXCLUDED_DEMO");
   Write(directory.path / "project/.git/config", "EXCLUDED_GIT");
   const auto c = Open({".git", "definitions/hidden", demo.string()}, true);
-  for (const auto access :
-       {Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
-    Grant(c, access);
   // Attaching their common ancestor is the route most likely to bypass a
   // workspace-only allowlist. The explicit deny must survive this mount.
   const auto attached = directory.path;
@@ -593,19 +556,6 @@ TEST_F(AgentExclusionRPC,
                                 b, b.CreateString(project_id),
                                 b.CreateString("folder:root"),
                                 b.CreateString(attached.string()))
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
-  const auto pending =
-      Tool(c, "attached_folder_read",
-           j::Encode(j::Members{{"folder", Quote(attached.string())},
-                                {"path", Quote("")}}));
-  ASSERT_EQ(pending.Code(), "grant_required");
-  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                   [&](Builder& b) {
-                     return A::CreateAccessResolveRequest(
-                                b, b.CreateString(pending.RequestId()), true)
                          .Union();
                    })
                   .Code()

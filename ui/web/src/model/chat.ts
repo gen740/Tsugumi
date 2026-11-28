@@ -1,11 +1,10 @@
 import { ConversationEvents, type PresentationUpdate } from '../wire/agentEvents'
 import { onHostEvent } from '../wire/host'
 import * as H from '../../shared/gen/tsugumi/host'
-import type { Access } from '../../shared/gen/tsugumi/service/access'
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
-import type { ChatRow, AccessGroup } from '../../shared/chatPresentation'
+import type { ChatRow } from '../../shared/chatPresentation'
 import { s, uuid } from '../wire/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, type GuideShow, parseShow } from './guide'
@@ -123,9 +122,9 @@ export class ChatController extends Observable {
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
-  private permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] = []
+  private permissions: { id: string; asked: string[]; from?: string; call_id?: string }[] = []
   get permission() { return this.permissions?.[0] }
-  private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }) {
+  private enqueuePermission(p: { id: string; asked: string[]; from?: string; call_id?: string }) {
     this.permissions ??= []
     if (!this.permissions.some(x => x.id === p.id)) {
       this.permissionRevision++
@@ -193,8 +192,8 @@ export class ChatController extends Observable {
     })
     this.offHost = onHostEvent((event) => {
       if (event.valueType !== H.EventPayload.ConversationChanged) return
-      const id = s((event.value as H.ConversationChangedT).answeredPermission)
-      if (id && this.permissions.some(p => p.id === id)) this.handle({ kind: 'permissionAnswered', id })
+      const id = s((event.value as H.ConversationChangedT).answeredDecision)
+      if (id && this.permissions.some(p => p.id === id)) this.handle({ kind: 'decisionAnswered', id })
     })
     let run = session.currentRunId
     this.offSession = session.subscribe(() => {
@@ -268,7 +267,7 @@ export class ChatController extends Observable {
   private async reread(id: string) {
     const request = ++this.reload, turn = this.turn, revision = this.contentRevision, permissions = this.permissionRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; runWake?: boolean; provider: ProviderInfo; eventSeq?: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; runWake?: boolean; provider: ProviderInfo; eventSeq?: string; permissions: { id: string; asked: string[]; from?: string; call_id?: string }[] }>(
         '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
       const eventSeq = r.eventSeq === undefined ? undefined : BigInt(r.eventSeq)
@@ -591,18 +590,12 @@ export class ChatController extends Observable {
     void this.refreshProvider()
   }
 
-  answerPermission(allow: boolean, id = this.permission?.id, selected?: string[]) {
+  answerPermission(allow: boolean, id = this.permission?.id) {
     const p = this.permission
     if (!p || p.id !== id) return
     this.removePermission(p.id)
     this.changed()
-    const access = selected?.flatMap(line => {
-      const prefix = 'project_access {'
-      if (!line.startsWith(prefix)) return []
-      const { access_id } = JSON.parse(line.slice('project_access '.length)) as { access_id: Access }
-      return [access_id]
-    })
-    void api('/api/chat/permission', { id: p.id, allow, selected: access }).catch((e) => this.fail(e))
+    void api('/api/chat/permission', { id: p.id, allow }).catch((e) => this.fail(e))
   }
 
   /** The files being written, by who writes them ('': the Agent, or a helper's name). */
@@ -676,16 +669,10 @@ export class ChatController extends Observable {
         this.items = items
         break
       }
-      case 'permission':
-        // A turn approval's event names only the request; its description is
-        // read with the conversation's pending requests.
-        if (!e.asked?.length) {
-          if (this.currentId) void this.reread(this.currentId)
-          break
-        }
-        this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from, call_id: e.call_id })
+      case 'decision':
+        this.enqueuePermission({ id: e.id, asked: e.asked, from: e.from, call_id: e.call_id })
         break
-      case 'permissionAnswered':
+      case 'decisionAnswered':
         this.removePermission(e.id)
         break
       case 'toolStarted':

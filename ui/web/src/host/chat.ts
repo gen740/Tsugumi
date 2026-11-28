@@ -1,9 +1,7 @@
-import type { AccessGroup } from '../../shared/chatPresentation'
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key), assembled in the page from Host and Agent RPC. Routes are merged
 // into the page's local route table (routes.ts).
 import { modelChoices } from '../../shared/agentShared'
-import type { Access } from '../../shared/gen/tsugumi/service/access'
 import type { ProviderConfig } from './types'
 import { CoreHost, CoreHostError } from './coreHost'
 import { Environments, projectKey } from './environment'
@@ -296,26 +294,26 @@ async function modelCatalogs() {
 
 // ---- Agent hosting -------------------------------------------------------------
 
-interface AccessRequest {
+interface Decision {
   id: string; state: string; conversation_id: string; project_path?: string
-  asked: string[]; groups?: AccessGroup[]; call_id?: string
+  asked: string[]; call_id?: string
 }
 
 /** Pending requests, read page by page within the RPC frame budget. */
-async function pendingAccess(filter: { conversation_id?: string; project_id?: string } = {}) {
-  const pending: AccessRequest[] = []
+async function pendingDecisions(filter: { conversation_id?: string; project_id?: string } = {}) {
+  const pending: Decision[] = []
   let cursor = '0'
   do {
-    const page = await core.user.call<{ requests: AccessRequest[]; next_cursor: string }>(
-      'AccessListRequest', { ...filter, cursor, pending_only: true })
-    pending.push(...page.requests.filter(r => r.state === 'pending'))
+    const page = await core.user.call<{ decisions: Decision[]; next_cursor: string }>(
+      'DecisionListRequest', { ...filter, cursor, pending_only: true })
+    pending.push(...page.decisions.filter(r => r.state === 'pending'))
     cursor = page.next_cursor
   } while (cursor && cursor !== '0')
   return pending
 }
 
-const answerPermission = (id: string, allow: boolean, selected?: Access[]) =>
-  core.user.call('AccessResolveRequest', { request_id: id, allow, selected })
+const answerDecision = (id: string, allow: boolean) =>
+  core.user.call('DecisionResolveRequest', { request_id: id, allow })
 
 class ChatHost {
   constructor(readonly project: string) {}
@@ -471,8 +469,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const project = projectKey(projectDir(b.path))
     const id = String(b.session)
     const a = await core.conversation(id, project)
-    const pending = (await pendingAccess()).filter(r => r.conversation_id === id || r.project_path === project)
-    const permissions = pending.map(r => ({ id: r.id, asked: r.asked, groups: r.groups, call_id: r.call_id,
+    const pending = (await pendingDecisions()).filter(r => r.conversation_id === id || r.project_path === project)
+    const permissions = pending.map(r => ({ id: r.id, asked: r.asked, call_id: r.call_id,
       from: r.conversation_id !== id && r.conversation_id !== 'guide' ? 'Claude Code' : undefined }))
     let info = await providerInfo()
     if (a.busy && a.modelBinding) {
@@ -509,7 +507,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/compact': conversationAction('Compact'),
   'POST /api/chat/permission': async (b) => {
     const allow = b.allow === true
-    await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
+    await answerDecision(String(b.id), allow)
     return { ok: true }
   },
   'POST /api/chat/runWake': async (b) => {

@@ -25,7 +25,6 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   });
   agent::ConversationStore store(
       gate, home.db, registry, [](std::string text) { return text; },
-      [](const auto&, auto) { return true; },
       [](const auto&) { return false; });
   flatbuffers::FlatBufferBuilder builder;
   Tsugumi::Agent::ConversationCreateRequestT create;

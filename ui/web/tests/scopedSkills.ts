@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { helperScopeLabel } from '../shared/agentShared'
 
 const page = globalThis as Record<string, any>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -27,11 +26,6 @@ try {
   assert.deepEqual(send.skillNames, ['review'])
   assert.equal(send.scopedSkill, 'review')
   assert.equal(send.text, '$review', 'The client never inserts a Skill body or manufactures scope sets')
-  const task = { name: 'review', skill_path: 'builtin:review', read_cards: ['outer/a', 'b'], write_cards: [], run_cards: [] }
-  const label = helperScopeLabel('project_access helper_scope\n' + JSON.stringify({ task }))
-  assert.match(label, /read: outer\/a, b/)
-  assert.match(label, /write: —/)
-  assert.match(label, /run: —/)
   rows = [{ id: 'turn:0', kind: 'helper', name: 'review', state: 'completed', text: 'Read only: finding', instruction: 'Review the selected Cards', scopeJa: '読む: outer/a, b, 変更: なし, 実行: なし', scopeEn: 'Read: outer/a, b, Change: none, Run: none', children: [] }]
   chat.select('scope-chat')
   await flush()

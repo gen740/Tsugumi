@@ -38,7 +38,6 @@ import { ProviderSelectionT } from '../../shared/gen/tsugumi/service/provider-se
 import { ProviderInputT } from '../../shared/gen/tsugumi/host/provider-input'
 import { SkillsListRequestT as HSkillsListRequest } from '../../shared/gen/tsugumi/host/skills-list-request'
 import { Action } from '../../shared/gen/tsugumi/agent/action'
-import { Access } from '../../shared/gen/tsugumi/service/access'
 import { HelloRequestT as AHelloRequest } from '../../shared/gen/tsugumi/service/hello-request'
 import { ConfigureRequestT as AConfigureRequest } from '../../shared/gen/tsugumi/agent/configure-request'
 import { ConversationCreateRequestT as AConversationCreateRequest } from '../../shared/gen/tsugumi/agent/conversation-create-request'
@@ -52,10 +51,8 @@ import { ConversationRunWakeRequestT as AConversationRunWakeRequest } from '../.
 import { EventsRequestT as AEventsRequest } from '../../shared/gen/tsugumi/agent/events-request'
 import { ToolCallRequestT as AToolCallRequest } from '../../shared/gen/tsugumi/agent/tool-call-request'
 import { ToolCallCancelRequestT as AToolCallCancelRequest } from '../../shared/gen/tsugumi/agent/tool-call-cancel-request'
-import { AccessRequestT as AAccessRequest } from '../../shared/gen/tsugumi/agent/access-request'
-import { AccessResolveRequestT as AAccessResolveRequest } from '../../shared/gen/tsugumi/agent/access-resolve-request'
-import { AccessRevokeRequestT as AAccessRevokeRequest } from '../../shared/gen/tsugumi/agent/access-revoke-request'
-import { AccessListRequestT as AAccessListRequest } from '../../shared/gen/tsugumi/agent/access-list-request'
+import { DecisionResolveRequestT as ADecisionResolveRequest } from '../../shared/gen/tsugumi/agent/decision-resolve-request'
+import { DecisionListRequestT as ADecisionListRequest } from '../../shared/gen/tsugumi/agent/decision-list-request'
 import { DemoReadRequestT as HDemoReadRequest } from '../../shared/gen/tsugumi/host/demo-read-request'
 import { VersionNoteRequestT as HVersionNoteRequest } from '../../shared/gen/tsugumi/host/version-note-request'
 import { ConversationSummarizeRequestT as AConversationSummarizeRequest } from '../../shared/gen/tsugumi/agent/conversation-summarize-request'
@@ -163,10 +160,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
     case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
-    case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
-    case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? [])
-    case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
-    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id, v.request_id, v.project_id, v.pending_only ?? false, BigInt(v.cursor ?? 0))
+    case 'DecisionResolveRequest': return new ADecisionResolveRequest(v.request_id, v.allow)
+    case 'DecisionListRequest': return new ADecisionListRequest(v.conversation_id, v.request_id, v.project_id, v.pending_only ?? false, BigInt(v.cursor ?? 0))
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)
@@ -210,7 +205,6 @@ function view(value: any): any {
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
     if (key === 'nextCursor') { out.next_cursor = String(v); continue }
-    if (key === 'access') { out[name] = Access[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)
   }
   return out

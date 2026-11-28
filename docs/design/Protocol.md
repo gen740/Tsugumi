@@ -625,17 +625,15 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `EventsRequest` | `conversation_id: string` (required), `after_seq: ulong`, `limit: uint` |
 | `ToolCatalogRequest` | None |
 | `ToolCallRequest` | `conversation_id: string` (required), `project_id: string`, `name: string` (required), `arguments_json: string` (required), `op_id: string` (required) |
-| `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
-| `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [Tsugumi.Service.Access]` |
-| `AccessRevokeRequest` | `grant_id: string` (required) |
-| `AccessListRequest` | `conversation_id: string`, `request_id: string`, `project_id: string`, `pending_only: bool`, `cursor: long` |
+| `DecisionResolveRequest` | `request_id: string` (required), `allow: bool` |
+| `DecisionListRequest` | `conversation_id: string`, `request_id: string`, `project_id: string`, `pending_only: bool`, `cursor: long` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
 | `ShowRequest` | `path: string`, `card: string`, `create: bool`, `browser: bool` |
 | `ConversationRunWakeRequest` | `conversation_id: string` (required), `run_wake: bool` |
 
-Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`, `Shown`.
+Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `EventsPage`, `ToolCatalog`, `ToolResult`, `DecisionList`, `TextResult`, `Failure`, `CallId`, `Shown`.
 
 ### Host service
 
@@ -644,8 +642,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | Request | Fields |
 | --- | --- |
 | `VersionCommentsRequest` | `project: string` (required), `commit: string` (required) |
-| `ProjectPermissionsRequest` | None |
-| `ProjectPermissionSetRequest` | `project_id: string` (required), `resource_id: string` (required), `access: Tsugumi.Service.Access`, `allow: bool` |
 | `BinaryCachesGetRequest` | None |
 | `BinaryCachesPutRequest` | `caches_json: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
@@ -718,4 +714,4 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `CachePushTargetGetRequest` | None |
 | `CachePushTargetPutRequest` | `kind: CachePushKind`, `endpoint: string`, `cache_name: string`, `credential_user: string`, `credential_secret: string`, `clear_credentials: bool` |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `HostPathBindings`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`, `CachePushTarget`.
+Reply variants: `ProjectOperationResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `HostPathBindings`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`, `CachePushTarget`.

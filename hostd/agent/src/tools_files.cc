@@ -5,7 +5,6 @@
 
 #include "agent/context.hh"
 #include "agent/tools.hh"
-#include "host/access.hh"
 #include "host/failure.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/text.hh"
@@ -237,14 +236,12 @@ auto Tools::FileOperation(const std::string& conversation,
         boundary->CheckCurrentSave(
             plan,
             HelperReader(conversation, stop, json::Get(base.snapshot, "rev"),
-                         boundary->authorization(), &base));
+                         &base));
     };
     return OperateProject(request, context, stop).json;
   }
   const auto read_scope =
-      HelperReader(conversation, stop, revision,
-                   boundary ? boundary->authorization() : std::nullopt,
-                   &inspected);
+      HelperReader(conversation, stop, revision, &inspected);
   auto check = [&](const std::string& path, bool writing) {
     policy.Check(path);
     if (!boundary || !boundary->scoped()) return;
@@ -461,9 +458,6 @@ auto Tools::FileOperation(const std::string& conversation,
           "SELECT id,path FROM folders WHERE project=? ORDER BY path");
       folders.bind(1, project);
       while (folders.step()) {
-        if (!access_service.HasGrant(folders.text(0),
-                                     Tsugumi::Service::Access::Read))
-          continue;
         const auto folder = folders.text(1);
         if (policy.Contains(folder)) continue;
         const auto tag = crypto::sha256_hex(folder).substr(0, 16);

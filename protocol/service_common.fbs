@@ -1,4 +1,4 @@
-// Shared authentication, access and result vocabulary for the Host and Agent services.
+// Shared authentication and result vocabulary for the Host and Agent services.
 include "rpc_trace.fbs";
 namespace Tsugumi.Service;
 attribute "trace_secret";
@@ -13,9 +13,6 @@ table Acknowledgement { accepted:bool; }
 // purpose: guide/summary asks the host to choose provider/model from settings;
 // model and use_choices are then ignored.
 table ProviderSelection { profile:string (required); provider_id:string; account_profile:string; model:string; use_choices:bool; purpose:string; }
-
-enum Access:ubyte { Read, Write, Run, CardPermissions, Shell, HelperScope }
-
 
 table Usage { input_tokens:ulong; output_tokens:ulong; cache_read_tokens:ulong; cache_write_tokens:ulong; }
 

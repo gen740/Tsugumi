@@ -1,7 +1,6 @@
 #include <algorithm>
 
 #include "agent/tools.hh"
-#include "host/access.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
 
@@ -210,15 +209,13 @@ auto Tools::EditProjectTool(const std::string& conversation,
                                          : H::ProjectLayoutAction::Untangle;
       request.body.Set(std::move(value));
     }
-    const auto authorization =
-        boundary ? boundary->authorization() : std::nullopt;
     std::optional<host::AgentExclude> policy;
     HelperScope::Reader read;
     auto use_inspection = [&](const host::SaveBase& base) {
       if (policy) return;
       policy = ExclusionsFor(project, base);
       if (boundary && boundary->scoped())
-        read = HelperReader(conversation, stop, {}, authorization, &base);
+        read = HelperReader(conversation, stop, {}, &base);
     };
     host::OperationContext context;
     context.origin = "agent";

@@ -16,14 +16,12 @@
 #include "agent/store.hh"
 #include "agent/thought_schedule.hh"
 #include "host/agent_exclude.hh"
-#include "host/authorization.hh"
 #include "host/state_gate.hh"
 #include "tsugumi/rpc/transport.hh"
 #include "tsugumi/util/locked.hh"
 
 namespace tsugumi::host {
 class Settings;
-struct Access;
 }
 namespace tsugumi::agent {
 struct Providers;
@@ -35,8 +33,7 @@ struct Turns {
     std::function<RuntimeHooks(const std::string&)> hooks;
     std::function<std::vector<ToolSpec>(bool)> specs;
     std::function<std::string(const std::string&, const std::string&, size_t,
-                              const std::string&, std::stop_token,
-                              const std::optional<host::TurnAuthorization>&)>
+                              const std::string&, std::stop_token, bool)>
         run_helper;
     std::function<void(const std::string&)> cancel_file_tools;
     std::function<host::AgentExclude(const std::string&, std::stop_token)>
@@ -47,7 +44,6 @@ struct Turns {
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
         std::stop_source& shutdown, bool& stopping,
-        host::Access& access,
         Dependencies dependencies);
   static auto System(bool guide = false) -> std::string;
   auto ThoughtsFor(const std::string& id) -> std::shared_ptr<ThoughtSchedule>;
@@ -92,7 +88,6 @@ struct Turns {
   host::Settings* host_settings;
   std::stop_source& shutdown;
   bool& stopping;
-  host::Access& access_service;
   Dependencies dependencies;
   struct Job {
     std::string project;

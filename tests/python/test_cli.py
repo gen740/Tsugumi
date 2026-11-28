@@ -797,10 +797,10 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
                 return
             assert updated.stdout, updated.stderr
             request = json.loads(updated.stdout)
-            assert request["code"] == "grant_required", updated.stdout + updated.stderr
+            assert request["code"] == "decision_required", updated.stdout + updated.stderr
             user = UserAgent(tmp_path)
             try:
-                user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
+                user.call("DecisionResolveRequest", request_id=request["request_id"], allow=True)
             finally:
                 user.close()
         pytest.fail(updated.stdout + updated.stderr)

@@ -30,9 +30,9 @@ export const permissionCatalog = new PermissionCatalog()
 export const permissionInfo = (kind: PermissionKind): PermissionInfo =>
   permissionCatalog.kinds.find(p => p.kind === kind) ?? { kind, label: kind, icon: 'hand.raised' }
 
-/** Parse every kind, including future ids. Special access/operation rows have their own display. */
+/** Parse every kind, including future ids. Operation rows have their own display. */
 export function parsePermission(raw: string): { raw: string; kind: PermissionKind; card: string; folder?: string } | undefined {
-  if (raw.startsWith('project_access ') || raw.includes('operation_approval\n')) return undefined
+  if (raw.includes('operation_approval\n')) return undefined
   const [kind, card = '', ...rest] = raw.split(' ')
   if (!kind) return undefined
   return { raw, kind, card, folder: rest.length ? rest.join(' ') : undefined }
@@ -56,7 +56,7 @@ export interface OperationApproval {
   detail: string
 }
 
-const OPERATION = 'project_access operation_approval\n'
+const OPERATION = 'operation_approval\n'
 const PROPOSED = 'Proposed arguments: '
 
 export function parseOperationApproval(asked: string[]): OperationApproval | undefined {

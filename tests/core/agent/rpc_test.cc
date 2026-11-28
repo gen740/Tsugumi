@@ -362,7 +362,6 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
   ModelServer model;
   Configure(model);
   const auto conversation = Conversation("indexed-tools");
-  Grant(conversation);
   const auto listed = Tool(conversation, "tools", R"({"family":"runs"})");
   ASSERT_TRUE(listed.Code().empty());
   std::set<std::string> actions;
@@ -719,18 +718,18 @@ TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
 TEST_F(AgentProjectFixture,
        InterruptedToolIsRecordedAndANewMessageCanReplaceResume) {
   ModelServer model;
-  model.Queue(AnthropicTool("pending-read", "project_inspect", "{}"));
+  model.Queue(AnthropicTool("pending-lock", "nix_path_lock_update", "{}"));
   model.Queue(AnthropicText("Followed the new message"));
   Configure(model);
   StartProject();
   const auto conversation = Conversation("interrupted-operation");
-  ASSERT_TRUE(Send(conversation, "Inspect the project").Code().empty());
-  // Pending Agent permission is exposed through EventsRequest reads only.
+  ASSERT_TRUE(Send(conversation, "Update the lock").Code().empty());
+  // A pending decision is exposed through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (Events(conversation).View().find("permission") == std::string::npos &&
+  while (Events(conversation).View().find("decision") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
-  ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
+  ASSERT_NE(Events(conversation).View().find("decision"), std::string::npos);
   host.reset();
   external.reset();
   human.reset();
@@ -740,12 +739,10 @@ TEST_F(AgentProjectFixture,
   EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"),
-            "project_inspect");
+            "nix_path_lock_update");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "1");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/arguments_json"),
             "{}");
-  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
-  Grant(conversation);
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   // A new message needs a new idempotency key; the fixture defaults to turn-1.
   // Both UIs encode empty selection vectors, rather than omitting them.
@@ -1621,7 +1618,6 @@ TEST_F(AgentProjectFixture,
                                 ->str();
   EXPECT_TRUE(std::regex_match(
       conversation, std::regex("[23456789abcdefghjkmnpqrstuvwxyz]{6}")));
-  Grant(conversation);
   ASSERT_TRUE(
       Send(conversation, "Inspect the current project.").Code().empty());
   WaitUntilIdle(conversation);

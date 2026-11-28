@@ -1,6 +1,5 @@
 import * as H from '../shared/gen/tsugumi/host'
 import { HostConnection } from '../src/wire/host'
-import { Access } from '../shared/gen/tsugumi/service/access'
 import { AcknowledgementT } from '../shared/gen/tsugumi/service/acknowledgement'
 import { ProjectTrust } from '../shared/gen/tsugumi/host/project-trust'
 import { PermissionKinds } from '../shared/gen/tsugumi/host/permission-kinds'
@@ -66,9 +65,9 @@ assert.equal(decoded.id, high)
 assert.equal(decoded.value.next_seq, high)
 assert.equal(decoded.value.events[0].seq, high)
 assert.equal(decoded.value.events[0].event.input, '{"x":1}')
-const failure = decodeReply(reply(ReplyPayload.Failure, new FailureT('grant_required', 'Ask first', 'permission-1')), false)
+const failure = decodeReply(reply(ReplyPayload.Failure, new FailureT('decision_required', 'Waiting for the person', 'decision-1')), false)
 assert.ok(failure.error instanceof CoreHostError)
-assert.equal(failure.error.requestId, 'permission-1')
+assert.equal(failure.error.requestId, 'decision-1')
 const locked = decodeReply(reply(ReplyPayload.Failure,
   new FailureT('busy', 'Internal diagnostic', null, new ConversationLockT(2345, 'Tsugumi Dev'))), false).error!
 assert.equal(locked.code, 'busy')
@@ -207,13 +206,13 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SettingsChanged', value: { revision: 'host:42' } })
 }
 
-// Each checkbox travels independently; no implicit Write/Run grant.
+// A decision's answer names the one request it answers.
 {
-  const bytes = encodeRequest('AccessResolveRequest', { request_id: 'first-access', allow: true, selected: [Access.Write] }, 5n, false)
+  const bytes = encodeRequest('DecisionResolveRequest', { request_id: 'first-decision', allow: true }, 5n, false)
   const message = Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
   const value = (message.payload as any).value
   assert.equal(value.allow, true)
-  assert.deepEqual(value.selected, [Access.Write])
+  assert.equal(value.requestId, 'first-decision')
 }
 
 // Formatting and version reads use the same generated Host request objects.
@@ -230,8 +229,6 @@ const { BFBS } = await import('../shared/bfbs')
 const serviceVectors = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/service-contract.json'), 'utf8'))
 const directHost: Record<string, (fields: any) => H.RequestT['value']> = {
   IdentifierReserveRequest: (f) => new H.IdentifierReserveRequestT(f.project_id, f.kind, f.scope, f.occupied),
-  ProjectPermissionsRequest: () => new H.ProjectPermissionsRequestT(),
-  ProjectPermissionSetRequest: (f) => new H.ProjectPermissionSetRequestT(f.project_id, f.resource_id, Access[f.access as keyof typeof Access], f.allow),
 }
 for (const c of serviceVectors.requests) {
   assert.equal(hostMethod(c.method), c.host, c.method)

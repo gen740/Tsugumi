@@ -72,7 +72,7 @@ public enum AgentEvent: Sendable {
 /// tools, persistence and authorization run behind the Agent socket.
 public actor Agent {
   public enum Role: String, Sendable { case worker, guide }
-  public typealias Approver = @Sendable ([String], [Tsugumi_Agent_AccessGroupT], String?) async -> Set<String>
+  public typealias Approver = @Sendable ([String], String?) async -> Set<String>
   public let id: String
   public private(set) var conversation = Conversation()
   private let transport: ToolTransport
@@ -90,7 +90,7 @@ public actor Agent {
   public private(set) var runWake = true
   public private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   public private(set) var modelBinding: Tsugumi_Agent_ModelBindingT?
-  private var answeredAccess: [String: Bool] = [:]
+  private var answeredDecisions: [String: Bool] = [:]
   private let client = CoreHostClient.shared
   private let request: (String, [String: Any]) async throws -> NativeObject
 
@@ -248,15 +248,15 @@ public actor Agent {
         events(.modelAccepted)
         var cursor: Int64 = 0
         repeat {
-          let access = try await AgentObservation.read {
-            try await self.view("AccessListRequest", ["conversation_id": self.id, "pending_only": true, "cursor": cursor])
+          let pending = try await AgentObservation.read {
+            try await self.view("DecisionListRequest", ["conversation_id": self.id, "pending_only": true, "cursor": cursor])
           }
           try Task.checkCancellation()
-          for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
+          for request in pending["decisions"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
             guard let requestID = request["id"] as? String else { continue }
-            _ = try await answerAccess(requestID)
+            _ = try await answerDecision(requestID)
           }
-          cursor = access["next_cursor"] as? Int64 ?? 0
+          cursor = pending["next_cursor"] as? Int64 ?? 0
         } while cursor != 0
         while !Task.isCancelled {
           let result: Tsugumi_Agent_EventsPageT = try await AgentObservation.read { try await self.reply("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
@@ -264,8 +264,8 @@ public actor Agent {
           var refreshed = false
           for item in result.events.compactMap({ $0 }) {
             let event = try ServiceWire.replyView(item.event)
-            if event["kind"] as? String == "permission", let request = event["id"] as? String {
-              _ = try await answerAccess(request)
+            if event["kind"] as? String == "decision", let request = event["id"] as? String {
+              _ = try await answerDecision(request)
             } else if let event = Self.event(event) {
               if case .finished = event { try await AgentObservation.read { try await self.refresh() }; refreshed = true }
               try Task.checkCancellation()
@@ -304,37 +304,28 @@ public actor Agent {
     }
   }
 
-  private func answerAccess(_ request: String) async throws -> Bool {
-    if let answer = answeredAccess[request] { return answer }
-    let access = try await self.view("AccessListRequest", ["conversation_id": id, "request_id": request])
-    guard let entry = (access["requests"] as? [[String: Any]])?.first,
+  private func answerDecision(_ request: String) async throws -> Bool {
+    if let answer = answeredDecisions[request] { return answer }
+    let listed = try await self.view("DecisionListRequest", ["conversation_id": id, "request_id": request])
+    guard let entry = (listed["decisions"] as? [[String: Any]])?.first,
           let state = entry["state"] as? String else { return false }
     if state == "unavailable" { return false }
     if state != "pending" {
-      answeredAccess[request] = state == "allowed"
+      answeredDecisions[request] = state == "allowed"
       return state == "allowed"
     }
     guard let approver else { throw CancellationError() }
-    let answer = await approver(entry["asked"] as? [String] ?? [],
-                                entry["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [],
-                                entry["call_id"] as? String)
+    let answer = await approver(entry["asked"] as? [String] ?? [], entry["call_id"] as? String)
     try Task.checkCancellation()
-    let selected = answer.compactMap { line -> Tsugumi_Service_Access? in
-      let prefix = "project_access "
-      guard line.hasPrefix(prefix),
-            let value = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(prefix.count).utf8)) as? [String: Any],
-            let access = value["access_id"] as? UInt8 else { return nil }
-      return Tsugumi_Service_Access(rawValue: access)
-    }
     var allowed = false
     do {
-      let result = try await self.view("AccessResolveRequest", ["request_id": request, "allow": !answer.isEmpty, "selected": selected])
+      let result = try await self.view("DecisionResolveRequest", ["request_id": request, "allow": !answer.isEmpty])
       allowed = result["accepted"] as? Bool ?? false
     } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
-      return try await answerAccess(request)
+      return try await answerDecision(request)
     }
-    answeredAccess[request] = allowed
+    answeredDecisions[request] = allowed
     return allowed
   }
 

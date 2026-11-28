@@ -16,8 +16,6 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   auto inspect = [&] {
     return json::Object(json::Get(
         json::Object(JsonString(Inspect(conversation).View(), "/text")),
@@ -106,7 +104,6 @@ TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
         R"({"type":"subgraph","symbol":"link"})");
   StartProject();
   const auto conversation = Conversation("read-confirmed-document");
-  Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   Write(definition, ::tsugumi::test::FixtureCodeCard(
                         R"({"grants":{"network":true,"gui":false}})"));
@@ -133,9 +130,6 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
       false,
       R"({"nixPath": [],"agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"private"}],"connections":[]}})");
   const auto conversation = Conversation("confirmed-exclusions");
-  for (const auto access :
-       {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
-    Grant(conversation, access);
   const auto revision = JsonString(
       JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
   auto edited = json::Object(Read(root / "tsugumi.json"));
@@ -250,8 +244,6 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
 TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
   StartProject();
   const auto conversation = Conversation("stale-save");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
@@ -298,8 +290,6 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
         R"({"type":"subgraph","symbol":"link"})");
   StartProject();
   const auto conversation = Conversation("nested-creator");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
@@ -406,8 +396,6 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
       false,
       R"({"name":"Scoped","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
   const auto conversation = Conversation("source-only-scoped");
-  Grant(conversation);
-  // A read grant never authorizes a save.
   const auto tool = GetParam() ? "project_edit" : "project_save";
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
@@ -419,10 +407,7 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
                 {"base_rev", json::Get(snapshot, "rev")},
                 {"changes",
                  R"json([{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"print(1)"}},{"value_type":"PutSource","value":{"path":"externals/outer/definitions/a/code.py","bytes":"print(2)"}}])json"}});
-  const auto refused = Tool(conversation, tool, args, "no-write");
-  EXPECT_EQ(refused.Code(), "grant_required");
   EXPECT_EQ(Read(root / "layout.bin"), FixtureLayout("{}"));
-  Grant(conversation, Tsugumi::Service::Access::Write);
   ModelServer model;
   Configure(model);
   model.Queue(AnthropicTool("save", tool, args));

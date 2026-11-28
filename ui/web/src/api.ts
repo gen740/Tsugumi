@@ -56,21 +56,22 @@ export async function closePageProject(_project: string) {
   return { ok: true }
 }
 
-/** Claude Code asked for access: the page on its project opens the chat. */
-async function showExternalAccess() {
+/** Claude Code waits for the person's decision, now or since before this page
+ *  opened: the page on its project shows it. */
+async function showExternalDecisions() {
   try {
-    const list = await local().core.user.call<{ requests: { id: string; state: string; conversation_id: string; project_path?: string; asked: string[]; groups?: unknown }[] }>('AccessListRequest')
-    for (const r of list.requests)
+    const list = await local().core.user.call<{ decisions: { id: string; state: string; conversation_id: string; project_path?: string; asked: string[]; call_id?: string }[] }>('DecisionListRequest', { pending_only: true })
+    for (const r of list.decisions)
       if (r.state === 'pending' && r.conversation_id.startsWith('external-') && r.project_path)
         emit({ type: 'chat', project: r.project_path, session: 'external',
-          event: { kind: 'permission', id: r.id, asked: r.asked, groups: r.groups, from: 'Claude Code' } })
+          event: { kind: 'decision', id: r.id, asked: r.asked, call_id: r.call_id, from: 'Claude Code' } })
   } catch { /* the next change reads it again */ }
 }
 
 /** The guide's progress is the same on every page of this origin. */
 let guideChannel: BroadcastChannel | undefined
 
-/** Events of hostd and this page: page routing, settings, the guide, Claude Code's access. */
+/** Events of hostd and this page: page routing, settings, the guide, Claude Code's decisions. */
 export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
   if (!started && transport) {
@@ -84,7 +85,7 @@ export function onServerEvent(fn: Listener): () => void {
     core.observeHost(({ type, value }) => {
       if (type === 'PageShow') emit({ type: 'agentOpen', project: value.project })
       else if (type === 'PageClosed') emit({ type: 'projectClosed', project: value.project })
-      else if (type === 'ConversationChanged' && String(value.conversation_id ?? '').startsWith('external-')) void showExternalAccess()
+      else if (type === 'ConversationChanged' && String(value.conversation_id ?? '').startsWith('external-')) void showExternalDecisions()
       else if (type === 'Disconnected') {
         lost = true
         // Events sent while the socket was down are lost: once it is back,
@@ -103,7 +104,7 @@ export function onServerEvent(fn: Listener): () => void {
       guideChannel = new BroadcastChannel('tsugumi.guide')
       guideChannel.onmessage = (m) => emit(m.data)
     }
-    void core.connectHost().then(() => report(reported)).catch(() => {})
+    void core.connectHost().then(() => { void showExternalDecisions(); return report(reported) }).catch(() => {})
   }
   return () => listeners.delete(fn)
 }

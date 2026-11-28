@@ -111,17 +111,11 @@ auto AgentTools::Call(const std::string& name, const std::string& arguments, con
   const auto connection = Agent();
   auto& agent = *connection;
   const auto conversation = "external-" + project->project_id;
-  // A moved transcript needs fresh grants. The tool request asks hostd for
-  // its own access without reading that transcript.
-  try {
-    A::ConversationCreateRequestT create;
-    create.conversation_id = conversation;
-    create.project_id = project->project_id;
-    create.role = "external";
-    AgentCall<A::ConversationResult>(agent, std::move(create));
-  } catch (const RpcFailure& e) {
-    if (e.code != "permission_denied") throw;
-  }
+  A::ConversationCreateRequestT create;
+  create.conversation_id = conversation;
+  create.project_id = project->project_id;
+  create.role = "external";
+  AgentCall<A::ConversationResult>(agent, std::move(create));
   A::CallIdRequestT reserve;
   reserve.conversation_id = conversation;
   reserve.name = name;
@@ -143,7 +137,8 @@ auto AgentTools::Call(const std::string& name, const std::string& arguments, con
         out.images.emplace_back(image->media_type()->str(), image->data()->str());
     return out;
   } catch (const RpcFailure& e) {
-    if (e.code != "grant_required" || e.request_id.empty()) throw;
+    // A decision waits for the person in the Tsugumi app or Web UI.
+    if (e.code != "decision_required" || e.request_id.empty()) throw;
     return {json::Encode(json::Members{{"code", json::Quote(e.code)},
                                        {"message", json::Quote(e.what())},
                                        {"request_id", json::Quote(e.request_id)}}),

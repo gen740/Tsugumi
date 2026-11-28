@@ -1,7 +1,7 @@
 // Conversations, observations and tools of the host-side Agent service.
 // Unix: little-endian uint32 length then one buffer. WebSocket: one binary
 // buffer, subprotocol tsugumi.agent.v1. Hello authenticates a server-owned
-// principal; clients cannot choose their role or grant themselves access.
+// principal; clients cannot choose their role or answer decisions as the person.
 include "service_common.fbs";
 namespace Tsugumi.Agent;
 
@@ -44,13 +44,13 @@ table ToolCallRequest { conversation_id:string (required); project_id:string; na
 // Cancels only this connection's in-flight ToolCallRequest, including a queued
 // call. It interrupts the call's wait, not the project run it may have started.
 table ToolCallCancelRequest { request_id:ulong; }
-table AccessRequest { project_id:string (required); conversation_id:string; access:Tsugumi.Service.Access; reason:string; }
-// Resolving/revoking grants requires the human principal, including over Unix.
-// The host applies the selected offered permissions; omission uses the needed access.
-table AccessResolveRequest { request_id:string (required); allow:bool; selected:[Tsugumi.Service.Access]; }
-table AccessRevokeRequest { grant_id:string (required); }
-// Pass next_cursor back with the same filters. Pending pages omit grants.
-table AccessListRequest {
+// A decision is a tool call that waits for the person: a save that widens a
+// Card's permissions or passes it a host secret, and the per-call acts that
+// change run data, versions, locks or Host templates. Answering requires the
+// human principal, including over Unix. Each answer applies to that one call.
+table DecisionResolveRequest { request_id:string (required); allow:bool; }
+// Pass next_cursor back with the same filters.
+table DecisionListRequest {
   conversation_id:string; request_id:string; project_id:string; pending_only:bool; cursor:long;
 }
 
@@ -60,7 +60,7 @@ table AccessListRequest {
 // tells a page that shows it or is on Home (PageShow). With no UI free, it
 // opens the Web UI with the system's opener when browser is set. Without a
 // path it shows Home. url is the Web UI; only the user's principal gets one
-// that carries the page key. Showing grants no access to the contents.
+// that carries the page key.
 table ShowRequest { path:string; card:string; create:bool; browser:bool = true; }
 table Shown { path:string; project_id:string; shown:bool; opened:bool; url:string; }
 
@@ -68,7 +68,7 @@ table ConversationSummarizeRequest { conversation_id:string (required); provider
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest, ConversationRunWakeRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, DecisionResolveRequest, DecisionListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest, ConversationRunWakeRequest
 }
 table Request { value:RequestPayload; }
 
@@ -89,8 +89,6 @@ table ChatRow {
   instruction:string; failed:uint; recovered:uint;
   links:[ChatLink]; children:[ChatRow];
 }
-table AccessLine { request:string; operation:string; needed_now:bool; }
-table AccessGroup { title:string; path:string; display_path:string; lines:[AccessLine]; }
 table Conversation {
   id:string (required); title:string; updated_at:long;
   messages:[ModelMessage]; archive:[ModelMessage]; summary:string;
@@ -109,7 +107,7 @@ table ConversationList { conversations:[ConversationEntry]; }
 table Event {
   kind:string (required); text:string; message:string; input_json:string;
   id:string; name:string; ok:bool = true; index:uint;
-  asked:[string]; groups:[AccessGroup]; event:Event; code:string; call_id:string;
+  asked:[string]; event:Event; code:string; call_id:string;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
 // Apply indexed replacements, then use row_count as the resulting length.
@@ -121,14 +119,12 @@ table Tool { name:string; description:string; input_schema_json:string; }
 table ToolCatalog { tools:[Tool]; }
 table Image { media_type:string; data:string; }
 table ToolResult { text:string; is_error:bool; images:[Image]; }
-table AccessResult { id:string (required); }
-table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; state:string; asked:[string]; groups:[AccessGroup]; call_id:string; unavailable_reason:string; project_path:string; }
-table Grant { id:string; project_id:string; access:Tsugumi.Service.Access; active:bool; }
-table AccessList { requests:[AccessEntry]; grants:[Grant]; next_cursor:long; }
+table Decision { id:string; project_id:string; conversation_id:string; state:string; asked:[string]; call_id:string; unavailable_reason:string; project_path:string; }
+table DecisionList { decisions:[Decision]; next_cursor:long; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   ConversationResult, ConversationList, EventsPage, ToolCatalog,
-  ToolResult, AccessResult, AccessList, TextResult:Tsugumi.Service.TextResult,
+  ToolResult, DecisionList, TextResult:Tsugumi.Service.TextResult,
   Failure:Tsugumi.Service.Failure, CallId, Shown
 }
 table Reply { value:ReplyPayload; }

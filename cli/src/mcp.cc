@@ -1,6 +1,6 @@
 // The Claude Code plugin's MCP server: newline-delimited JSON-RPC on stdio.
 // It forwards calls to hostd's Agent socket as the external principal. The
-// tool catalog, execution, conversations and access decisions are hostd's.
+// tool catalog, execution, conversations and the person's decisions are hostd's.
 #include "mcp.hh"
 
 #include <atomic>
@@ -195,7 +195,7 @@ class Server {
                            "project); the user opens it in the Tsugumi app or with `tsugumi web` (or call "
                            "tsugumi_open again without browser: false).";
     auto text = "Opened " + o.path + " in Tsugumi" + (o.url.empty() ? "" : " (web UI: " + o.url + ")") + ". " +
-                where + " Opening a project does not grant Agent access to its contents.";
+                where;
     if (!rules_sent_.exchange(true)) text += "\n\n" + std::string(kInstructions);
     return {text, false, {}};
   }

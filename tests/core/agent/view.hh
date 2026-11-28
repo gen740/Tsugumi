@@ -25,9 +25,6 @@ auto View(T value) -> std::string {
   else
     return std::to_string(value);
 }
-inline auto View(Tsugumi::Service::Access v) -> std::string {
-  return Quote(Tsugumi::Service::EnumNameAccess(v));
-}
 inline auto Object(
     std::initializer_list<std::pair<std::string, std::string>> fields)
     -> std::string {
@@ -58,10 +55,8 @@ inline auto View(const A::ToolCatalog* value) -> std::string;
 inline auto View(const A::Image* value) -> std::string;
 inline auto View(const A::ToolResult* value) -> std::string;
 inline auto View(const A::CallId* value) -> std::string;
-inline auto View(const A::AccessResult* value) -> std::string;
-inline auto View(const A::AccessEntry* value) -> std::string;
-inline auto View(const A::Grant* value) -> std::string;
-inline auto View(const A::AccessList* value) -> std::string;
+inline auto View(const A::Decision* value) -> std::string;
+inline auto View(const A::DecisionList* value) -> std::string;
 inline auto View(const H::DemoPaths* value) -> std::string;
 inline auto View(const Tsugumi::Service::TextResult* value) -> std::string;
 inline auto View(const H::ProjectDefaults* value) -> std::string;
@@ -230,30 +225,17 @@ inline auto View(const A::CallId* value) -> std::string {
   if (!value) return "null";
   return Object({{"id", View(value->id())}});
 }
-inline auto View(const A::AccessResult* value) -> std::string {
-  if (!value) return "null";
-  return Object({{"id", View(value->id())}});
-}
-inline auto View(const A::AccessEntry* value) -> std::string {
+inline auto View(const A::Decision* value) -> std::string {
   if (!value) return "null";
   return Object({{"id", View(value->id())},
                  {"project_id", View(value->project_id())},
                  {"conversation_id", View(value->conversation_id())},
-                 {"access", View(value->access())},
                  {"state", View(value->state())},
                  {"unavailable_reason", View(value->unavailable_reason())}});
 }
-inline auto View(const A::Grant* value) -> std::string {
+inline auto View(const A::DecisionList* value) -> std::string {
   if (!value) return "null";
-  return Object({{"id", View(value->id())},
-                 {"project_id", View(value->project_id())},
-                 {"access", View(value->access())},
-                 {"active", View(value->active())}});
-}
-inline auto View(const A::AccessList* value) -> std::string {
-  if (!value) return "null";
-  return Object({{"requests", View(value->requests())},
-                 {"grants", View(value->grants())}});
+  return Object({{"decisions", View(value->decisions())}});
 }
 inline auto View(const H::DemoPaths* value) -> std::string {
   if (!value) return "null";

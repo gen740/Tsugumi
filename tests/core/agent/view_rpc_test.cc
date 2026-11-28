@@ -58,8 +58,6 @@ TEST_F(ViewRpcFixture, AgentListsSendsInputAndReceivesTheRendererPng) {
   ModelServer model;
   Configure(model);
   const auto conversation = Conversation("view-tools");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Run);
 
   auto renderer = ConnectHost(true);
   ASSERT_TRUE(Report(*renderer).Code().empty());

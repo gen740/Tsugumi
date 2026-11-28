@@ -41,7 +41,7 @@ struct CardPermission: RawRepresentable, Hashable {
     var id: String { raw }
 
     init?(_ raw: String) {
-      guard !raw.hasPrefix("project_access "), !raw.contains("operation_approval\n") else { return nil }
+      guard !raw.contains("operation_approval\n") else { return nil }
       let parts = raw.split(separator: " ", maxSplits: 2).map(String.init)
       guard let first = parts.first, let kind = CardPermission(rawValue: first) else { return nil }
       self.raw = raw

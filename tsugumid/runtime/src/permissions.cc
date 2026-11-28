@@ -1,5 +1,6 @@
 #include "permissions.hh"
 
+#include <algorithm>
 #include <set>
 
 #include "tsugumi/document/document.hh"
@@ -51,6 +52,11 @@ std::vector<std::string> widenings(const Resolution* before,
       else if (f.write && !had->write)
         out.push_back("host_folder_write " + key + " " + f.name);
     }
+    // A declared name receives the value the host keeps for the project.
+    for (const auto& name : s.secrets)
+      if (!b || std::ranges::find(b->settings.secrets, name) ==
+                    b->settings.secrets.end())
+        out.push_back("secret " + key + " " + name);
   }
   return out;
 }

@@ -4,7 +4,7 @@ import * as H from '../../shared/gen/tsugumi/host'
 import { HelloRequestT } from '../../shared/gen/tsugumi/service/hello-request'
 import { FailureT } from '../../shared/gen/tsugumi/service/failure'
 import { Client } from '../../shared/gen/tsugumi/trace/client'
-import type { AccessGroup, ChatRow } from '../../shared/chatPresentation'
+import type { ChatRow } from '../../shared/chatPresentation'
 import { modelErrorMessage } from '../i18n'
 import { onHostClose, onHostEvent, openPageRpc, sharedHost } from './host'
 import { RPCError, s, sOpt } from './rpc'
@@ -59,17 +59,11 @@ function chatRow(row: A.ChatRowT): ChatRow {
   }
 }
 
-function accessGroup(group: A.AccessGroupT): AccessGroup {
-  return { title: s(group.title), path: s(group.path), displayPath: s(group.displayPath),
-    lines: group.lines.map(l => ({ request: s(l.request), operation: s(l.operation), neededNow: l.neededNow })),
-  }
-}
-
 function eventFields(e: A.EventT) {
   return {
     kind: s(e.kind), text: s(e.text), message: s(e.message), input: s(e.inputJson), id: s(e.id), name: s(e.name),
     arguments: s(e.inputJson ?? e.text), delta: s(e.inputJson ?? e.text), index: e.index, ok: e.ok,
-    asked: e.asked.map(s), groups: e.groups.map(accessGroup), code: sOpt(e.code),
+    asked: e.asked.map(s), code: sOpt(e.code),
   }
 }
 

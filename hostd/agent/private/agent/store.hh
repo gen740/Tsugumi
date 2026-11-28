@@ -36,12 +36,10 @@ struct ConversationStore {
   };
 
   using Scrub = std::function<std::string(std::string)>;
-  using HasGrant =
-      std::function<bool(const std::string&, Tsugumi::Service::Access)>;
   using IsRunning = std::function<bool(const std::string&)>;
   ConversationStore(host::StateGate& gate, sql::Db& home,
                     host::ProjectRegistry& registry, Scrub scrub,
-                    HasGrant has_grant, IsRunning is_running,
+                    IsRunning is_running,
                     std::string application = "tsugumi-hostd");
   ~ConversationStore();
   auto OpenedPath(const std::string& project)
@@ -61,7 +59,6 @@ struct ConversationStore {
   auto Resources(const std::string& id) -> std::vector<std::string>;
   auto RememberResource(const std::string& id, const std::string& project)
       -> void;
-  auto AuthorizeHistory(const std::string& id) -> void;
   auto SaveMessages(const std::string& id, const std::vector<Message>& messages,
                     SaveMode mode = SaveMode::Checkpoint) -> void;
   auto ConversationData(const Conversation& conversation)
@@ -103,7 +100,6 @@ struct ConversationStore {
   sql::Db& db;
   host::ProjectRegistry& registry;
   Scrub scrub;
-  HasGrant has_grant;
   IsRunning is_running;
   std::string application;
   std::map<std::string, std::unique_ptr<ProjectStore>> project_stores;

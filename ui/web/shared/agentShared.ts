@@ -3,21 +3,6 @@
 // reference tool and model options.
 import shared from '../../../hostd/agent/Shared/agent.json'
 
-export function projectAccessNeededNow(request: string): boolean {
-  try { return JSON.parse(request.slice('project_access '.length)).needed_now !== false } catch { return true }
-}
-
-/** Core supplies this description identically for live and restored requests. */
-export function helperScopeLabel(request: string): string {
-  try {
-    if (request.startsWith('project_access helper_scope\n')) {
-      const { task } = JSON.parse(request.slice('project_access helper_scope\n'.length))
-      return `$${task.name}\n${task.skill_path ?? ""}\n` + ['read', 'write', 'run'].map(a => `${a}: ${(task[`${a}_cards`] ?? []).join(', ') || '—'}`).join('\n')
-    }
-  } catch { /* An unknown request remains readable verbatim. */ }
-  return request
-}
-
 export const AGENT = shared
 
 /** What a connection offers for a model (hostd/agent/Shared/agent.json, from the

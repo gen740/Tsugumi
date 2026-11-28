@@ -2,7 +2,7 @@
 when none runs (the same `tsugumi-hostd --ensure` as `tsugumi web`), shows a
 project through hostd's ShowRequest as the external principal, and runs the
 chat Agent's core tools there; a page is told what to show, and only the
-user answers access requests. Needs build/cli/tsugumi, hostd and tsugumid."""
+user answers decisions. Needs build/cli/tsugumi, hostd and tsugumid."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def stop_resident_services(root: Path, *, vm_helper: Path | None = None):
 
 class UserAgent:
     """The user's Agent socket, from host.ready (what the page reaches over
-    its cookie): it answers access requests, which the plugin cannot."""
+    its cookie): it answers decisions, which the plugin cannot."""
 
     def __init__(self, root: Path):
         self.ready = json.loads((root / "host-core/host.ready").read_text())
@@ -143,15 +143,16 @@ class UserAgent:
         self.socket.close()
 
 
-def allow_pending_access(mcp, name: str, arguments: dict, user: UserAgent):
-    """The plugin asks; only the authenticated user may answer."""
+def allow_pending_decision(mcp, name: str, arguments: dict, user: UserAgent):
+    """The call waits for the person; only the authenticated user may answer."""
     text, error = mcp.call(name, arguments)
     assert error, text
     request = json.loads(text)
-    assert request["code"] == "grant_required", request
-    result, denied = mcp.call("agent_access_resolve", {"request_id": request["request_id"], "allow": True})
-    assert denied and "authenticated user" in result, result
-    user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
+    assert request["code"] == "decision_required", request
+    assert "approval in Tsugumi" in request["message"], request
+    result, denied = mcp.call("agent_decision_resolve", {"request_id": request["request_id"], "allow": True})
+    assert denied, result
+    user.call("DecisionResolveRequest", request_id=request["request_id"], allow=True)
     return request["request_id"]
 
 
@@ -273,12 +274,10 @@ def test_external_wait_cancellation_reaches_host_without_stopping_the_run(waitin
     text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
     assert not error, text
     user = UserAgent(root)
-    allow_pending_access(mcp, "project_inspect", {}, user)
     text, error = mcp.call("project_inspect", {})
     assert not error, text
     revision = json.loads(text)["value"]["rev"]
     start = {"base_rev": str(revision), "card": {"segments": ["work"]}}
-    allow_pending_access(mcp, "run", start, user)
     conversation = external_conversation(user)
 
     def events():
@@ -334,7 +333,8 @@ def test_tools_instructions_and_demo_catalog(plugin):
     names = [t["name"] for t in tools]
     assert "tsugumi_open" in names
     assert len(names) == len(set(names))
-    assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
+    assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_decision_list", "agent_conversation_get"} <= set(names)
+    assert not {"agent_access", "agent_access_resolve", "agent_decision_resolve"} & set(names)
     # The plugin sees the same core tool catalog and Agent operations.
     assert {"tools", "delegate", "demo_list", "project_edit"} <= set(names)
     assert not any(name.startswith(("guide_", "agent_guide_")) for name in names)
@@ -382,7 +382,7 @@ def test_concurrent_plugin_and_command_starts_share_one_host(plugin):
         second.close()
 
 
-def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
+def test_open_runs_core_tools_and_only_the_user_answers_decisions(plugin):
     mcp, root = plugin
     mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})
     write_project(root / "proj")
@@ -400,14 +400,12 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
     assert "key=" not in text
     user = UserAgent(root)
     try:
-        allow_pending_access(mcp, "project_inspect", {}, user)
         text, error = mcp.call("project_inspect", {})
         assert not error, text
         snap = json.loads(text)
         project = json.loads(snap["value"]["project_json"])
         project["name"] = "renamed by Claude Code"
         save = {"base_rev": str(snap["value"]["rev"]), "changes": [{"value_type": "SetProject", "value": {"json": json.dumps(project)}}]}
-        allow_pending_access(mcp, "project_save", save, user)
         text, error = mcp.call("project_save", save)
         assert not error, text
         assert json.loads((root / "proj" / "tsugumi.json").read_text())["name"] == "renamed by Claude Code"
@@ -429,7 +427,7 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
             "store": "project", "name": "added-via-mcp", "path": str(source),
         }}
         added = root / "proj/templates/added-via-mcp/start/_card.json"
-        allow_pending_access(mcp, "tools", add, user)
+        allow_pending_decision(mcp, "tools", add, user)
         assert not added.exists()
         text, error = mcp.call("tools", add)
         assert not error, text
@@ -440,7 +438,7 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
             "store": "project", "name": "added-via-mcp",
         }}
         copied = root / "proj/definitions/start_2/_card.json"
-        allow_pending_access(mcp, "tools", guarded_copy, user)
+        allow_pending_decision(mcp, "tools", guarded_copy, user)
         assert not copied.exists()
         text, error = mcp.call("tools", guarded_copy)
         assert not error, text
@@ -490,7 +488,7 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
 def test_tool_subcommands_work_as_the_external_principal(tmp_path):
     """`tsugumi <tool>` is the MCP server's catalog on the command line: the
     same tools, typed options from their schemas, JSON out, and the same
-    access as Claude Code's (only the user answers access requests)."""
+    tools as Claude Code's (only the user answers decisions)."""
     write_project(tmp_path / "proj")
     env = isolated_environment(tmp_path)
 
@@ -501,23 +499,13 @@ def test_tool_subcommands_work_as_the_external_principal(tmp_path):
         listed = tsugumi("--help")
         assert listed.returncode == 0, listed.stderr
         assert "  run plan - " in listed.stdout and "  runs <action>" in listed.stdout
-        assert "  agent access resolve - " in listed.stdout
+        assert "  agent decision list - " in listed.stdout
+        assert "agent decision resolve" not in listed.stdout
         plan = tsugumi("run", "plan", "--help")
         assert plan.returncode == 0 and "--card <object> (required)" in plan.stdout
         assert tsugumi("project", "inspect", "--bogus", "1").returncode == 1
-        asked = tsugumi("project", "inspect")
-        assert asked.returncode == 1, asked.stderr
-        request = json.loads(asked.stdout)
-        assert request["code"] == "grant_required"
-        denied = tsugumi("agent", "access", "resolve", "--request-id", request["request_id"], "--allow")
-        assert denied.returncode == 1 and "authenticated user" in denied.stderr
-        raw = tsugumi("call", "AccessResolveRequest", json.dumps({"request_id": request["request_id"], "allow": True}))
+        raw = tsugumi("call", "DecisionResolveRequest", json.dumps({"request_id": "any", "allow": True}))
         assert raw.returncode == 1 and json.loads(raw.stdout)["code"] == "permission_denied"
-        user = UserAgent(tmp_path)
-        try:
-            user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
-        finally:
-            user.close()
         inspected = tsugumi("project", "inspect")
         assert inspected.returncode == 0, inspected.stdout
         assert json.loads(inspected.stdout)["reply"] == "ProjectSnapshot"

@@ -101,10 +101,8 @@ struct Reply {
         return test::View(r->value_as_ToolResult());
       case A::ReplyPayload::CallId:
         return test::View(r->value_as_CallId());
-      case A::ReplyPayload::AccessResult:
-        return test::View(r->value_as_AccessResult());
-      case A::ReplyPayload::AccessList:
-        return test::View(r->value_as_AccessList());
+      case A::ReplyPayload::DecisionList:
+        return test::View(r->value_as_DecisionList());
       case A::ReplyPayload::TextResult:
         return test::View(r->value_as_TextResult());
       default:
@@ -285,37 +283,6 @@ class AgentFixture : public ::testing::Test {
                  b.CreateString(operation))
           .Union();
     });
-  }
-
-  auto Grant(const std::string& conversation,
-             Tsugumi::Service::Access access = Tsugumi::Service::Access::Read)
-      -> std::string {
-    auto ask =
-        Call(*external, A::RequestPayload::AccessRequest, [&](Builder& b) {
-          return A::CreateAccessRequest(
-                     b, b.CreateString(project_id),
-                     b.CreateString(conversation), access,
-                     b.CreateString("Read this project for the requested work"))
-              .Union();
-        });
-    const auto id = JsonString(ask.View(), "/id");
-    auto reply =
-        Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
-          return A::CreateAccessResolveRequest(b, b.CreateString(id), true)
-              .Union();
-        });
-    if (!reply.Code().empty())
-      throw std::runtime_error("user could not grant access");
-    return id;
-  }
-
-  auto Revoke(const std::string& grant) -> void {
-    const auto reply =
-        Call(*human, A::RequestPayload::AccessRevokeRequest, [&](Builder& b) {
-          return A::CreateAccessRevokeRequest(b, b.CreateString(grant)).Union();
-        });
-    if (!reply.Code().empty())
-      throw std::runtime_error("user could not revoke access");
   }
 
   auto Configure(const ModelServer& model, std::string provider = "fixture",

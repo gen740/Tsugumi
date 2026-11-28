@@ -16,9 +16,11 @@ namespace {
 using reflection::BaseType;
 
 // Requests that are not operations of their own: the connection's Hello, the
-// call bookkeeping of ToolCallRequest, and showing a project (tsugumi_open).
+// call bookkeeping of ToolCallRequest, showing a project (tsugumi_open) and
+// the person's answer to a decision, which only the person gives.
 constexpr std::string_view kHidden[] = {"HelloRequest", "ToolCallCancelRequest",
-                                        "CallIdRequest", "ShowRequest"};
+                                        "CallIdRequest", "ShowRequest",
+                                        "DecisionResolveRequest"};
 
 auto Schema() -> const reflection::Schema& {
   static const auto* schema = [] {

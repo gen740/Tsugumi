@@ -452,7 +452,7 @@ final class UIScript {
           say("setting: expected <key> <json>")
         }
       case "permission":
-        // permission allow|deny [minutes]: answers the Agent's next access or approval prompt
+        // permission allow|deny [minutes]: answers the next decision the Agent waits for
         // (waiting for it to come up) and writes what was asked.
         if let s = session {
           let chat = AppModel.shared.chat(for: s)

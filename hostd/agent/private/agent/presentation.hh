@@ -10,6 +10,4 @@ auto Presentation(const Tsugumi::Agent::ConversationT& conversation)
 // nothing in progress: a call that never got its result was interrupted.
 auto SettleStopped(std::vector<std::unique_ptr<Tsugumi::Agent::ChatRowT>>& rows)
     -> void;
-auto AccessGroups(const std::vector<std::string>& asked)
-    -> std::vector<std::unique_ptr<Tsugumi::Agent::AccessGroupT>>;
 }  // namespace tsugumi::agent

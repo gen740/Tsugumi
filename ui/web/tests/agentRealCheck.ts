@@ -1,4 +1,3 @@
-import { Access } from '../shared/gen/tsugumi/service/access'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -7,7 +6,6 @@ import { chatRoutes, type ChatContext } from '../src/host/chat'
 import { CoreHost } from '../src/host/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
 import { permissionCatalog } from '../src/model/permissions'
-import { projectAccessNeededNow } from '../shared/agentShared'
 import { act, create } from 'react-test-renderer'
 import { createElement } from 'react'
 
@@ -24,10 +22,8 @@ const original = { settings: CoreHost.prototype.getSettings,
 let model = 'gpt-6.1-sol'
 let busy = false
 let signInState = 'idle'
-const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', reason: 'Read project content', needed_now: true })
-const write = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Write', needed_now: false })
-const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Run', needed_now: false })
-let pendingAsked = [asked, write, run]
+const asked = 'operation_approval\nproject_save\n' + JSON.stringify({ project: 'project-a', permissions: ['network fetch'] })
+let pendingAsked = [asked]
 const calls: { method: string; fields: any }[] = []
 const events: any[] = []
 let host: CoreHost | undefined
@@ -52,7 +48,7 @@ try {
         signInState = 'cancelled'
         return {} as T
       }
-      if (method === 'AccessResolveRequest') return {} as T
+      if (method === 'DecisionResolveRequest') return {} as T
       if (method === 'ModelSelectionRequest') return { provider: { providerId: 'chatgpt', model: 'gpt-6.1-luna' } } as T
       if (method === 'ModelsListRequest') return [] as T
       if (method === 'ConversationListRequest') return (fields.project_id === 'project-a' ? [{ id: 'a', title: 'Only A' }] : []) as T
@@ -63,7 +59,7 @@ try {
         return snapshots(fields.conversation_id) as T
       }
       if (method === 'ConversationGetRequest') return snapshots(fields.conversation_id) as T
-      if (method === 'AccessListRequest') return { requests: [{
+      if (method === 'DecisionListRequest') return { decisions: [{
         id: 'pending-a', state: 'pending', conversation_id: 'a', project_path: folders[0], asked: pendingAsked,
       }] } as T
       throw new Error(`Unexpected call: ${method}`)
@@ -99,19 +95,18 @@ try {
   assert.equal(cancelled.outcome?.ok, false)
   assert.deepEqual(await call('sessions', { path: folders[1] }), [])
   const a = await call('conversation', { path: folders[0], session: 'a' })
-  assert.deepEqual(a.permissions[0].asked, [asked, write, run])
-  assert.deepEqual(a.permissions[0].asked.filter(projectAccessNeededNow), [asked])
+  assert.deepEqual(a.permissions[0].asked, [asked])
   assert.equal(a.eventSeq, '0')
   assert.ok(!calls.some(c => c.method === 'ConversationActionRequest' || c.method === 'ConversationSendRequest'))
-  await call('permission', { id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
-  assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
-  pendingAsked = [run.replace('"needed_now":false', '"needed_now":true')]
+  await call('permission', { id: 'pending-a', allow: true })
+  assert.deepEqual(calls.filter(c => c.method === 'DecisionResolveRequest').at(-1)?.fields,
+    { request_id: 'pending-a', allow: true })
+  pendingAsked = ['operation_approval\nversion_init\n{}']
   const later = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(later.permissions[0].asked, pendingAsked)
-  await call('permission', { id: 'pending-a', allow: false, selected: [Access.Run] })
-  assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
-    { request_id: 'pending-a', allow: false, selected: [Access.Run] })
+  await call('permission', { id: 'pending-a', allow: false })
+  assert.deepEqual(calls.filter(c => c.method === 'DecisionResolveRequest').at(-1)?.fields,
+    { request_id: 'pending-a', allow: false })
   const b = await call('conversation', { path: folders[1], session: 'b' })
   assert.deepEqual(b.permissions, [])
   assert.equal(b.provider.model, 'gpt-6.1-sol')
@@ -131,12 +126,6 @@ try {
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
-const choices = [asked, write, run]
-const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], lines: choices.map(request => {
-  const fields = JSON.parse(request.slice('project_access '.length))
-  return { request, operation: fields.access, neededNow: fields.needed_now }
-}) }]
-const selections: string[] = []
 const originalRead = permissionCatalog.read
 const sandboxRequest = 'sandbox_off Collatz'
 const sandboxLabel = 'Run outside the sandbox'
@@ -159,17 +148,6 @@ try {
     assert.ok(prompt.root.findByType('input').props['aria-label'].includes(sandboxLabel))
   } finally { unsubscribe(); prompt.unmount() }
 } finally { permissionCatalog.read = originalRead }
-const view = create(createElement(PermissionRequests, {
-  asked: choices, groups, selected: [asked], onSelect(request, on) { if (on) selections.push(request) },
-}))
-try {
-  const group = view.root.findByType('li')
-  assert.equal(group.findByType('strong').props.children, groups[0].title)
-  const toggles = group.findAllByProps({ type: 'checkbox' })
-  assert.equal(toggles.filter(toggle => toggle.props.checked).length, 1)
-  for (const toggle of toggles) toggle.props.onChange({ target: { checked: true } })
-  assert.deepEqual(new Set(selections), new Set(choices))
-} finally { view.unmount() }
 const label = toolStep('project_file_read', JSON.stringify({ card: ['analysis', 'result'] }), () => 'Analysis Result')
 assert.equal(label.card, 'analysis/result')
 assert.ok(label.running.includes('Analysis Result') && label.done.includes('Analysis Result'))

@@ -10,7 +10,6 @@
 #include "agent/text.hh"
 #include "agent/tools.hh"
 #include "agent/turns.hh"
-#include "host/access.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "tsugumi/util/crypto.hh"
@@ -20,14 +19,13 @@ namespace tsugumi::agent {
 using host::Failure;
 Helpers::Helpers(host::StateGate& gate, ConversationStore& conversations,
                  Providers& providers, host::Settings& settings, Tools& tools,
-                 Turns& turns, host::Access& access, Dependencies dependencies)
+                 Turns& turns, Dependencies dependencies)
     : mutex(gate.mutex),
       conversations(&conversations),
       providers(&providers),
       host_settings(&settings),
       tools(&tools),
       turns(&turns),
-      access_service(access),
       dependencies(std::move(dependencies)) {}
 
 auto Helpers::LastAnswer(const std::vector<Message>& messages) -> Message {
@@ -89,8 +87,7 @@ auto Helpers::Displaced(const std::vector<Message>& previous,
 
 auto Helpers::RunHelper(
     const std::string& conversation, const std::string& parent_call,
-    size_t index, const std::string& task, std::stop_token stop,
-    const std::optional<host::TurnAuthorization>& authorization)
+    size_t index, const std::string& task, std::stop_token stop, bool direct)
     -> std::string {
   const auto key = std::tuple{conversation, parent_call, index};
   std::shared_ptr<std::mutex> gate;
@@ -137,7 +134,6 @@ auto Helpers::RunHelper(
         throw Failure("conflict",
                       "A helper ID was reused for different instructions");
       messages = ParseMessages(old.text(1));
-      access_service.AuthorizeContext(messages, authorization);
       if (old.text(3) == "completed") return old.text(2);
     } else {
       ContentBlock instruction;
@@ -151,15 +147,14 @@ auto Helpers::RunHelper(
           json::Get(spec, "depth", "0") +
           "; count=" + json::Get(spec, "count", "0") +
           " children over your lifetime. The host enforces this capability.";
-      instruction.resource_ids = authorization
-                                     ? std::vector{authorization->project()}
-                                     : conversations->Resources(conversation);
-      messages.push_back(
-          {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
       auto& store = conversations->ConversationDatabase(conversation);
       sql::Transaction tx(store);
-      if (authorization)
-        conversations->RememberResource(conversation, authorization->project());
+      if (direct)
+        conversations->RememberResource(
+            conversation, conversations->GetConversation(conversation).project);
+      instruction.resource_ids = conversations->Resources(conversation);
+      messages.push_back(
+          {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
       auto insert = store.prepare(
           "INSERT INTO helpers "
           "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
@@ -187,7 +182,7 @@ auto Helpers::RunHelper(
     }
     config = providers->ForConversation(conversation);
   }
-  if (authorization)
+  if (direct)
     dependencies.event(conversation, json::Encode(json::Members{
                                          {"kind", json::Quote("helperStarted")},
                                          {"text", task}}));
@@ -197,9 +192,9 @@ auto Helpers::RunHelper(
                                        {"name", json::Quote(name)},
                                        {"index", std::to_string(index)},
                                        {"event", R"({"kind":"checkpoint"})"}}));
-  auto boundary = std::make_shared<HelperScope>(spec, authorization, scope);
+  auto boundary = std::make_shared<HelperScope>(spec, direct, scope);
   boundary->identity = scope;
-  const auto read = tools->HelperReader(conversation, stop, {}, authorization);
+  const auto read = tools->HelperReader(conversation, stop, {});
   // Receipt ownership survives both interruption and transcript compaction.
   std::vector<std::string> owned_receipts;
   {
@@ -291,7 +286,7 @@ auto Helpers::RunHelper(
       boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper,
       boundary->depth() > 0 && boundary->count() > 0);
   auto system = Turns::System();
-  if (!authorization) system += turns->AutomaticSkills(conversation, stop, hooks);
+  if (!direct) system += turns->AutomaticSkills(conversation, stop, hooks);
   const auto result = Runtime().Run(config, system, messages, tools, stop, hooks);
   std::string output;
   {

@@ -6,7 +6,3 @@ export interface ChatRow {
   instruction: string; failed: number; recovered: number
   links: { title: string; url: string }[]; children: ChatRow[]
 }
-export interface AccessGroup {
-  title: string; path: string; displayPath: string
-  lines: { request: string; operation: string; neededNow: boolean }[]
-}

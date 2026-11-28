@@ -161,7 +161,7 @@ export function App() {
     }
     return onServerEvent((e) => {
       if (e.type === 'agentOpen' && !workspace.session) void commands.current.openProject(e.project)
-      if (e.type === 'chat' && e.session === 'external' && e.event?.kind === 'permission' && workspace.session?.dir === e.project) workspace.set('showChat', true)
+      if (e.type === 'chat' && e.session === 'external' && e.event?.kind === 'decision' && workspace.session?.dir === e.project) workspace.set('showChat', true)
     })
   }, [])
 

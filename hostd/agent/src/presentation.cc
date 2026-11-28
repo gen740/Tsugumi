@@ -664,36 +664,4 @@ auto Presentation(const A::ConversationT& conversation) -> Rows {
   return BuildRows(messages, conversation.archive.size(), conversation, "",
                    false);
 }
-auto AccessGroups(const std::vector<std::string>& asked)
-    -> std::vector<std::unique_ptr<A::AccessGroupT>> {
-  std::vector<std::unique_ptr<A::AccessGroupT>> groups;
-  for (const auto& request : asked) {
-    if (!request.starts_with("project_access {")) continue;
-    const auto value = ObjectOrEmpty(request.substr(15));
-    if (value.empty()) continue;
-    const auto path = json::Text(value, "path"),
-               title = json::Text(value, "title");
-    auto group = std::ranges::find_if(groups, [&](const auto& g) {
-      return g->path == path && g->title == title;
-    });
-    if (group == groups.end()) {
-      auto g = std::make_unique<A::AccessGroupT>();
-      g->title = title;
-      g->path = path;
-      g->display_path = path;
-      const auto home = std::getenv("HOME");
-      if (home && (path == home || path.starts_with(std::string(home) + "/")))
-        g->display_path = "~" + path.substr(std::string(home).size());
-      groups.push_back(std::move(g));
-      group = std::prev(groups.end());
-    }
-    auto line = std::make_unique<A::AccessLineT>();
-    line->request = request;
-    line->operation = json::Text(value, "access");
-    line->needed_now = json::Bool(json::Get(value, "needed_now", "true"));
-    (*group)->lines.push_back(std::move(line));
-  }
-  return groups;
-}
-
 }  // namespace tsugumi::agent

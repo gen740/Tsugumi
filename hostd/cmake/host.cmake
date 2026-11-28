@@ -12,7 +12,7 @@ add_library(tsugumi_host_core STATIC
   ${_tsugumi_host_agent_sources}
   ${_tsugumi_host_transport_sources}
   ${_tsugumi_host_util_sources}
-  ${PROJECT_SOURCE_DIR}/hostd/src/access.cc
+  ${PROJECT_SOURCE_DIR}/hostd/src/decisions.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/store.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/process_lock.cc
   ${_tsugumi_host_settings_sources}

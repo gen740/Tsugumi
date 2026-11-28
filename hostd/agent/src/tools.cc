@@ -16,7 +16,7 @@
 #include "agent/version_find.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
-#include "host/access.hh"
+#include "host/decisions.hh"
 #include "host/agent_policy.hh"
 #include "host/attached_folder.hh"
 #include "host/demo_references.hh"
@@ -70,7 +70,7 @@ auto ToolOutput(std::string_view raw, bool error,
 Tools::Tools(host::StateGate& gate, sql::Db& database, ConversationStore& store,
              Providers& selections, host::Settings& settings,
              host::DemoReferences& demos, Turns& turns, std::stop_source& stop,
-             host::Access& access, Dependencies dependencies)
+             host::Decisions& decisions, Dependencies dependencies)
     : mutex(gate.mutex),
       db(database),
       conversations(&store),
@@ -80,7 +80,7 @@ Tools::Tools(host::StateGate& gate, sql::Db& database, ConversationStore& store,
       registry(store.registry),
       turns(&turns),
       shutdown(stop),
-      access_service(access),
+      decisions(decisions),
       dependencies(std::move(dependencies)) {}
 
 auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
@@ -368,9 +368,6 @@ auto Tools::OutsideProjectFiles(const std::string& project,
         db.prepare("SELECT id,path FROM folders WHERE project=? ORDER BY path");
     folders.bind(1, project);
     while (folders.step()) {
-      if (!access_service.HasGrant(folders.text(0),
-                                   Tsugumi::Service::Access::Read))
-        continue;
       const auto inside =
           real.lexically_relative(std::filesystem::weakly_canonical(
               folders.text(1), error));
@@ -986,24 +983,22 @@ auto Tools::ApproveOperation(const std::string& project,
         &run_ids);
   };
   std::unique_lock lock(mutex);
-  auto approval = access_service.FindApproval(host::ApprovalKind::Operation,
-                                              conversation, call.id, binding);
+  auto approval = decisions.Find(conversation, call.id, binding);
   if (!approval) {
     lock.unlock();
     const auto preview = describe();
     lock.lock();
     conversations->RememberResource(conversation, project);
     approval =
-        access_service.RequestApproval(host::ApprovalKind::Operation, project,
-                                       conversation, call.id, binding, preview);
+        decisions.Request(project, conversation, call.id, binding, preview);
   }
-  access_service.WaitApproval(lock, approval->id, wait, stop);
+  decisions.Wait(lock, approval->id, wait, stop);
   lock.unlock();
   const auto current = describe();
   lock.lock();
   const bool matches = current == approval->preview;
   auto consume = db.prepare(
-      "UPDATE permission_requests SET state=? WHERE id=? AND state='allowed'");
+      "UPDATE decisions SET state=? WHERE id=? AND state='allowed'");
   consume.bind(1, matches ? "consumed" : "stale").bind(2, approval->id).run();
   if (!db.changes())
     throw Failure("outcome_unknown", "This approval was already consumed");
@@ -1015,16 +1010,13 @@ auto Tools::ApproveOperation(const std::string& project,
 auto Tools::ToolResources(const std::string& conversation,
                           const HelperScope* boundary)
     -> std::vector<std::string> {
-  if (boundary && boundary->authorization())
-    return {boundary->authorization()->project()};
+  (void)boundary;
   return conversations->Resources(conversation);
 }
 
 auto Tools::HelperReader(
     const std::string& conversation, std::stop_token stop,
-    const std::string& revision,
-    const std::optional<host::TurnAuthorization>& authorization,
-    const host::SaveBase* inspected)
+    const std::string& revision, const host::SaveBase* inspected)
     -> HelperScope::Reader {
   std::string project;
   {
@@ -1037,11 +1029,8 @@ auto Tools::HelperReader(
     std::map<std::string, std::string> files;
   };
   auto context = std::make_shared<Context>();
-  return [this, project, conversation, stop, revision, authorization, inspected,
+  return [this, project, stop, revision, inspected,
           context](const std::string& path) {
-    access_service.Require(project, conversation,
-                           Tsugumi::Service::Access::Read, true, stop,
-                           "Read helper Card context", authorization);
     if (!inspected && !context->inspected)
       context->inspected = host::CaptureSaveBase(InspectProject(project, stop));
     const auto& base = inspected ? *inspected : *context->inspected;
@@ -1218,7 +1207,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
     for (const auto& message : saved) {
       for (const auto& block : message.content) {
         if (block.type != "tool_result" || block.id != wanted) continue;
-        access_service.AuthorizeContext({message});
         const auto offset = json::UInt(json::Get(args, "offset"),
                                        json::UInt(json::Text(args, "offset")));
         if (offset > block.text.size())
@@ -1349,12 +1337,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
       if (stop.stop_requested()) throw Cancelled();
       pending.push_back(std::async(
           std::launch::async,
-          [this, conversation, id = call.id, i, task = tasks[i], stop,
-           authorization =
-               boundary ? boundary->authorization() : std::nullopt] {
+          [this, conversation, id = call.id, i, task = tasks[i], stop] {
             return Helpers::HelperResult(
                 dependencies.run_helper(conversation, id, i, task, stop,
-                                        authorization),
+                                        false),
                 conversation, id, i);
           }));
     }
@@ -1371,10 +1357,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (project.empty())
     throw Failure("invalid_request",
                   "Select a project before using project tools");
-  const auto authorization =
-      boundary ? boundary->authorization() : std::nullopt;
-  access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
-                         wait, stop, "Read project content", authorization);
   std::optional<host::SaveBase> inspected;
   if (boundary) {
     RequireHelperPermission(*boundary);
@@ -1392,7 +1374,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     // Resolve nested file ownership and read the file at one revision. If
     // the parent changes a container link in between, the project rejects
     // the stale at_rev/base_rev instead of reading a different Card.
-    const auto read = HelperReader(conversation, stop, revision, authorization,
+    const auto read = HelperReader(conversation, stop, revision,
                                    inspected ? &*inspected : nullptr);
     if (boundary->scoped() && call.name == "nix_path_lock_update")
       throw Failure("permission_denied",
@@ -1446,52 +1428,21 @@ auto Tools::ExecuteTool(const std::string& conversation,
   const bool changes_project =
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
-  if (changes_project || call.name == "project_shell")
-    access_service.Require(project, conversation,
-                           Tsugumi::Service::Access::Write, wait, stop,
-                           "Change project content", authorization);
-  if (execution)
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Run,
-                           wait, stop, "Execute or cancel project work",
-                           authorization);
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
-  if (call.name == "project_shell") {
-    const bool english =
-        host_settings->Language() == "en";
-    const std::string reason =
-        english
-            ? "Execute shell commands as the project user in its environment. "
-              "Commands can change writable Card source files through a "
-              "validated save. "
-              "Attached folders and structural documents are read-only. "
-              "Command: "
-            : "プロジェクトの実行環境でシェルコマンドを実行します。"
-              "書き込みが許可された Card "
-              "のソースを編集し、検証して保存できます。"
-              "添付フォルダと構造文書は読み取り専用です。コマンド: ";
-    access_service.Require(project, conversation,
-                           Tsugumi::Service::Access::Shell, wait, stop,
-                           reason + json::Text(args, "command"));
-  }
   std::string folder_resource;
   if (call.name == "attached_folder_read" ||
       (call.name == "project_copy" &&
        json::Text(args, "source") == "attached")) {
     Exclusions(project, stop).Check(json::Text(args, "folder"));
-    {
-      std::lock_guard lock(mutex);
-      auto folder =
-          db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
-      folder.bind(1, project).bind(2, json::Text(args, "folder"));
-      if (!folder.step())
-        throw Failure("permission_denied",
-                      "The user has not registered this attached folder");
-      folder_resource = folder.text(0);
-    }
-    access_service.Require(folder_resource, conversation,
-                           Tsugumi::Service::Access::Read, wait, stop,
-                           "Read the user-selected attached folder");
+    std::lock_guard lock(mutex);
+    auto folder =
+        db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
+    folder.bind(1, project).bind(2, json::Text(args, "folder"));
+    if (!folder.step())
+      throw Failure("permission_denied",
+                    "The person has not attached this folder");
+    folder_resource = folder.text(0);
   }
   host::StripOwnedFields(call.name, spec->mutating, args);
   if (call.name == "evaluate_nix") {
@@ -1534,15 +1485,14 @@ auto Tools::ExecuteTool(const std::string& conversation,
       interrupted = true;
       if (!spec->approval_required) {
         auto approval = db.prepare(
-            "SELECT state,id,reason FROM permission_requests "
-            "WHERE conversation=? AND call=? AND access=?");
-        approval.bind(1, conversation)
-            .bind(2, call.id)
-            .bind(3, static_cast<int>(host::ApprovalKind::Operation));
+            "SELECT state,id FROM decisions WHERE conversation=? AND call=?");
+        approval.bind(1, conversation).bind(2, call.id);
         if (approval.step()) {
           const auto state = approval.text(0);
-          if (state == "pending" && !wait)
-            throw Failure("grant_required", approval.text(2), approval.text(1));
+          if (state == "pending" && !wait) {
+            std::unique_lock pending(mutex);
+            decisions.Wait(pending, approval.text(1), false, stop);
+          }
           if (state == "denied")
             throw Failure("permission_denied",
                           "The user declined this operation. Nothing was "
@@ -1596,8 +1546,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
               : call.name,
           json::Encode(args), stop);
     try {
-      const auto before = HelperReader(
-          conversation, stop, json::Get(args, "base_rev"), authorization);
+      const auto before =
+          HelperReader(conversation, stop, json::Get(args, "base_rev"));
       const auto expanded = boundary->ExpandSave(args, before);
       return SaveProject(
           project, expanded, stop, [&](const host::SaveBase& latest) {
@@ -1801,10 +1751,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (error) {
     auto failure = json::Object(json::Get(envelope, "value", "{}"));
     if (json::Text(failure, "kind") == "approval_required") {
-      if (authorization)
-        throw Failure(
-            "permission_denied",
-            "A scoped Skill cannot widen Card permissions at runtime");
       std::vector<std::string> permissions;
       for (const auto& arg : json::Array(json::Get(failure, "args", "[]"))) {
         auto pair = json::Object(arg);
@@ -1941,10 +1887,6 @@ auto Tools::Hooks(const std::string& id, bool helper,
   hooks.allocate_call = [this, id, boundary] {
     return AllocateCall(id, boundary ? boundary->identity : "");
   };
-  hooks.authorize_context = [this, boundary](const auto& messages) {
-    access_service.AuthorizeContext(
-        messages, boundary ? boundary->authorization() : std::nullopt);
-  };
   hooks.checkpoint = [this, id](const auto& messages) {
     std::lock_guard lock(mutex);
     conversations->SaveMessages(id, messages);
@@ -1961,8 +1903,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
             json::Object(json::Get(json::Object(result.text), "value", "{}")),
             "rev", "");
       return boundary ? ScopedResult(*boundary, call, std::move(result),
-                                     HelperReader(id, stop, revision,
-                                                  boundary->authorization()))
+                                     HelperReader(id, stop, revision))
                       : result;
     } catch (const Cancelled&) {
       throw;
@@ -2006,8 +1947,6 @@ auto Tools::Hooks(const std::string& id, bool helper,
                                                        : ModelRole::Main;
     const auto call = catalog.ResolveCall(requested_call, role);
     if (call.name == "delegate") {
-      if (!boundary || !boundary->authorization())
-        conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
           "SELECT result,state,task FROM helpers WHERE conversation=? "
           "AND parent_call=? ORDER BY task");
@@ -2083,8 +2022,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
                           "Delegation ID reused with different tasks");
           return reconcile(call);
         }
-        const auto read = HelperReader(id, shutdown.get_token(), {},
-                                       boundary->authorization());
+        const auto read = HelperReader(id, shutdown.get_token());
         boundary->Check(call.name, json::Object(call.arguments), read);
         auto result = reconcile(call);
         if (result) {
@@ -2095,8 +2033,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
                                                  "value", "{}")),
                           "rev", "");
           return ScopedResult(*boundary, call, std::move(*result),
-                              HelperReader(id, shutdown.get_token(), revision,
-                                           boundary->authorization()));
+                              HelperReader(id, shutdown.get_token(), revision));
         }
         return std::nullopt;
       } catch (const std::exception& error) {
@@ -2133,13 +2070,10 @@ auto Tools::Handle(const RequestIn& request, bool human,
           // sent receipt. A retry must resume the approved call ID.
           if (spec->approval_required) {
             auto approval = db.prepare(
-                "SELECT call FROM permission_requests WHERE conversation=? "
-                "AND project=? AND access=? AND digest=? AND state "
-                "IN ('pending','allowed') ORDER BY rowid DESC LIMIT 1");
-            approval.bind(1, conversation)
-                .bind(2, project)
-                .bind(3, static_cast<int>(host::ApprovalKind::Operation))
-                .bind(4, digest);
+                "SELECT call FROM decisions WHERE conversation=? AND "
+                "project=? AND digest=? AND state IN ('pending','allowed') "
+                "ORDER BY rowid DESC LIMIT 1");
+            approval.bind(1, conversation).bind(2, project).bind(3, digest);
             if (approval.step()) result.id = approval.text(0);
           }
           if (!result.id.empty())
@@ -2152,13 +2086,9 @@ auto Tools::Handle(const RequestIn& request, bool human,
           receipts.bind(1, conversation).bind(2, digest);
           while (receipts.step()) {
             auto approval = db.prepare(
-                "SELECT 1 FROM permission_requests WHERE conversation=? AND "
-                "call=? "
-                "AND access=? AND state "
-                "IN ('pending','allowed')");
-            approval.bind(1, conversation)
-                .bind(2, receipts.text(0))
-                .bind(3, static_cast<int>(host::ApprovalKind::Operation));
+                "SELECT 1 FROM decisions WHERE conversation=? AND call=? AND "
+                "state IN ('pending','allowed')");
+            approval.bind(1, conversation).bind(2, receipts.text(0));
             if (approval.step()) {
               result.id = receipts.text(0);
               break;

@@ -53,8 +53,7 @@ auto Usage() -> void {
                "       tsugumi web [--port N] [--no-browser] [project folder]\n"
                "       tsugumi mcp\n"
                "       tsugumi update | uninstall [--yes] | --version\n"
-               "Tools work as the host's Agent principal, with the same access "
-               "as Claude Code's.\n";
+               "Tools work as the host's external Agent principal.\n";
 }
 
 auto HostPaths(const f::path& executable, const std::vector<std::string>& args)

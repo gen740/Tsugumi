@@ -26,7 +26,7 @@ class Settings;
 struct DemoReferences;
 }  // namespace tsugumi::host
 namespace tsugumi::host {
-struct Access;
+struct Decisions;
 }
 namespace tsugumi::agent {
 struct Providers;
@@ -39,8 +39,7 @@ struct Tools {
     std::function<std::string(std::string)> scrub;
     std::function<void(const std::string&, const std::string&)> event;
     std::function<std::string(const std::string&, const std::string&, size_t,
-                              const std::string&, std::stop_token,
-                              const std::optional<host::TurnAuthorization>&)>
+                              const std::string&, std::stop_token, bool)>
         run_helper;
     std::function<Tsugumi::Host::ViewWindowsT(const std::string&)> view_windows;
     std::function<Tsugumi::Host::ViewActionResultT(
@@ -55,7 +54,7 @@ struct Tools {
   Tools(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
         host::DemoReferences& demos, Turns& turns, std::stop_source& shutdown,
-        host::Access& access, Dependencies dependencies);
+        host::Decisions& decisions, Dependencies dependencies);
   auto SaveProject(const std::string& project, json::Members args,
                    std::stop_token stop,
                    const std::function<void(const host::SaveBase&)>& check = {})
@@ -112,11 +111,9 @@ struct Tools {
       -> std::vector<std::string>;
   auto ToolResources(const std::string& conversation,
                      const HelperScope* boundary) -> std::vector<std::string>;
-  auto HelperReader(
-      const std::string& conversation, std::stop_token stop,
-      const std::string& revision = {},
-      const std::optional<host::TurnAuthorization>& authorization = {},
-      const host::SaveBase* inspected = nullptr)
+  auto HelperReader(const std::string& conversation, std::stop_token stop,
+                    const std::string& revision = {},
+                    const host::SaveBase* inspected = nullptr)
       -> HelperScope::Reader;
   auto ScopedResult(HelperScope& scope, const ToolCall& call, ToolResult result,
                     const HelperScope::Reader& read) -> ToolResult;
@@ -141,7 +138,7 @@ struct Tools {
   host::ProjectRegistry& registry;
   Turns* turns;
   std::stop_source& shutdown;
-  host::Access& access_service;
+  host::Decisions& decisions;
   Dependencies dependencies;
   Catalog catalog;
   struct FileCall {

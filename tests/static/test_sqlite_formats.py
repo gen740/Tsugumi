@@ -27,7 +27,10 @@ STORES = {
 # Keep existing entries. When the DDL changes, bump the version in C++ and add
 # the new fingerprint reported by the test. Shared Agent tables affect both stores.
 FORMATS = {
-    "host.sqlite": {1: "a62f2f02b16d73e06865a238a815cf2a4d124288bd24d807a3b0b07a0c118330"},
+    "host.sqlite": {
+        1: "a62f2f02b16d73e06865a238a815cf2a4d124288bd24d807a3b0b07a0c118330",
+        2: "fd97e56cb6a37ae96b2e0a0f1e0ed0faced8fc370ef16f0d4a59469eba096840",
+    },
     "agent.sqlite": {1: "b1e75f930be0b85116bdf504523e61000d8d6ab397ba61979c7b39328044320f"},
     "execution.sqlite": {
         1: "c96812aecbd05d3aab28c807d6c97d9dd35b6ff91ae128f456e54101e0ba50bf",

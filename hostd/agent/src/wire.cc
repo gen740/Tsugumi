@@ -127,7 +127,6 @@ auto Event(std::string_view stored) -> A::EventT {
   out.index = json::UInt(json::Get(o, "index"));
   for (const auto& raw : json::Array(json::Get(o, "asked", "[]")))
     out.asked.push_back(json::String(raw));
-  out.groups = AccessGroups(out.asked);
   if (o.contains("event"))
     out.event = std::make_unique<A::EventT>(Event(json::Get(o, "event")));
   return out;

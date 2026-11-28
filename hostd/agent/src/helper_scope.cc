@@ -99,8 +99,7 @@ auto Set(const json::Members& task, const std::string& field)
 }
 }  // namespace
 
-HelperScope::HelperScope(const json::Members& task,
-                         std::optional<host::TurnAuthorization> authorization,
+HelperScope::HelperScope(const json::Members& task, bool direct,
                          std::string scratch_identity)
     : depth_(json::UInt(json::Get(task, "depth", "0"))),
       count_(json::UInt(json::Get(task, "count", "0"))),
@@ -109,7 +108,7 @@ HelperScope::HelperScope(const json::Members& task,
       reads_(Set(task, "read_cards")),
       writes_(Set(task, "write_cards")),
       runs_(Set(task, "run_cards")),
-      authorization_(std::move(authorization)),
+      direct_(direct),
       scratch_identity_(std::move(scratch_identity)) {}
 
 auto HelperScope::Validate(const json::Members& task, bool allow_unscoped)

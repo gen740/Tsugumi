@@ -21,9 +21,6 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"nixPath": [],"canvas":{"cards":[{"id":"load"},{"id":"knn"},{"id":"nested"}],"connections":[{"from":{"card":"load","port":"out"},"to":{"card":"knn","port":"in"}}]}})");
   const auto conversation = Conversation("missing-inputs");
-  for (const auto access :
-       {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
-    Grant(conversation, access);
   const auto revision = JsonString(
       JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
   auto run = [&](const std::string& card, const std::string& id) {
@@ -61,10 +58,6 @@ class AgentRunWaitFixture : public AgentProjectFixture {
           R"({"gate":"run-wait","error":"fixture completion"})");
     StartProject();
     const auto conversation = Conversation("run-wait");
-    for (auto access :
-         {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
-          Tsugumi::Service::Access::Run})
-      Grant(conversation, access);
     return conversation;
   }
 
@@ -190,7 +183,6 @@ TEST_F(AgentRunWaitFixture, ConcurrentWaitsLeaveNormalToolsAvailable) {
   // Occupy the dedicated wait slots before invoking an ordinary tool.
   ToolStarted(conversation, "run_status", 4);
   const auto other = Conversation("while-waiting");
-  Grant(other);
   // Inspect replies through the normal RPC path while wait slots are occupied.
   EXPECT_TRUE(Inspect(other).Code().empty());
   EXPECT_TRUE(
@@ -220,7 +212,6 @@ TEST_F(AgentRunWaitFixture, DeletingAConversationStopsAndUnregistersItsWait) {
                   .empty());
   EXPECT_EQ(pending.get().Code(), "cancelled");
   EXPECT_EQ(Conversation("run-wait"), conversation);
-  Grant(conversation);
   // Reusing the deleted ID/call must not find a leaked registration or old
   // toolFinished event, and stopping a wait must leave the run active.
   EXPECT_EQ(Events(conversation).View().find("deleted-wait"),
@@ -353,7 +344,6 @@ TEST_F(AgentRunWaitFixture,
   ASSERT_TRUE(model.WaitForRequests(1));
   ToolStarted(conversation, "tools");
   const auto other = Conversation("other-conversation");
-  Grant(other);
   ASSERT_TRUE(Inspect(other).Code().empty());
   EXPECT_TRUE(JsonBool(Get(conversation).View(), "/busy"));
   EXPECT_EQ(model.Requests().size(), 1u);

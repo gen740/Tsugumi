@@ -66,7 +66,7 @@ the person's decision.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- The person decides a Card's sandbox and grants. A save that widens access waits for their approval, with your reason. A declined
+- The person decides a Card's sandbox, grants and secrets. A save that widens them waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
   may include a boundary with inputs and outputs, both lists of {name, card, port}. Use project_edit on files
@@ -87,7 +87,7 @@ the person's decision.
   It reads what the actual build
   target recorded for the run. A shell can have a different Nix store from the Card's build target.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
-  its Skills, while access and permission grants still apply.
+  its Skills.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
   Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
   and version changes wait for the person's approval of each call. For a trial the person describes without its run,

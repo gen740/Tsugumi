@@ -16,7 +16,7 @@
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
-#include "host/access.hh"
+#include "host/decisions.hh"
 #include "host/binary_caches.hh"
 #include "host/credentials.hh"
 #include "host/debug_trace.hh"
@@ -119,26 +119,17 @@ struct Service::State {
     conversations = std::make_unique<ConversationStore>(
         state_gate, db, registry,
         [this](std::string raw) { return Scrub(std::move(raw)); },
-        [this](const std::string& resource, Tsugumi::Service::Access access) {
-          return this->access->HasGrant(resource, access);
-        },
         [this](const std::string& id) { return turns->running.contains(id); },
         options.application);
-    access = std::make_unique<host::Access>(
+    decisions = std::make_unique<host::Decisions>(
         state_gate, db, registry, *conversations, stopping,
-        host::Access::Dependencies{
-            .event = [this](const auto& id,
-                            const auto& raw) { Event(id, raw); },
-            .cancel = [this](const auto& project) {
-              for (const auto& [_, call] : tools->file_calls)
-                if (call.project == project) call.stop->request_stop();
-              for (const auto& [id, job] : turns->jobs)
-                if (job.project == project && turns->running.contains(id))
-                  job.worker->request_stop();
+        host::Decisions::Dependencies{
+            .event = [this](const auto& id, const auto& raw) {
+              Event(id, raw);
             }});
     turns = std::make_unique<Turns>(
         state_gate, db, *conversations, *providers, *host_settings, shutdown,
-        stopping, *access,
+        stopping,
         Turns::Dependencies{
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
@@ -147,9 +138,9 @@ struct Service::State {
             .specs = [this](bool guide) { return tools->Specs(guide); },
             .run_helper =
                 [this](const auto& id, const auto& call, size_t index,
-                       const auto& task, auto stop, const auto& authorization) {
+                       const auto& task, auto stop, bool direct) {
                   return helpers->RunHelper(id, call, index, task, stop,
-                                            authorization);
+                                            direct);
                 },
             .cancel_file_tools =
                 [this](const auto& id) {
@@ -166,7 +157,7 @@ struct Service::State {
                 }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
-        demo_references, *turns, shutdown, *access,
+        demo_references, *turns, shutdown, *decisions,
         Tools::Dependencies{
             .host_templates =
                 (options.vm.support.empty() ? options.state_dir.parent_path()
@@ -177,9 +168,9 @@ struct Service::State {
                             const auto& raw) { Event(id, raw); },
             .run_helper =
                 [this](const auto& id, const auto& call, size_t index,
-                       const auto& task, auto stop, const auto& authorization) {
+                       const auto& task, auto stop, bool direct) {
                   return helpers->RunHelper(id, call, index, task, stop,
-                                            authorization);
+                                            direct);
                 },
             .view_windows = [this](const auto& project) {
               return views.List(project);
@@ -199,7 +190,6 @@ struct Service::State {
         });
     helpers = std::make_unique<Helpers>(
         state_gate, *conversations, *providers, *host_settings, *tools, *turns,
-        *access,
         Helpers::Dependencies{
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
@@ -402,7 +392,7 @@ struct Service::State {
   std::unique_ptr<Turns> turns;
   std::unique_ptr<Tools> tools;
   std::unique_ptr<Helpers> helpers;
-  std::unique_ptr<host::Access> access;
+  std::unique_ptr<host::Decisions> decisions;
   std::unique_ptr<host::SkillsService> skills_service;
   std::unique_ptr<host::Models> models;
   std::unique_ptr<host::Versions> versions;
@@ -553,8 +543,8 @@ struct Service::State {
     conversations->RecordEvent(id, raw);
     H::ConversationChangedT notification;
     notification.conversation_id = id;
-    if (kind == "permissionAnswered")
-      notification.answered_permission = json::Text(event, "id");
+    if (kind == "decisionAnswered")
+      notification.answered_decision = json::Text(event, "id");
     events->Publish(wire::HostEvent(std::move(notification)));
   }
 
@@ -657,7 +647,6 @@ struct Service::State {
         auto c = conversations->GetConversation(
             r->value_as_ConversationGetRequest()->conversation_id()->str());
         conversations->OwnConversation(c.id, human);
-        if (!human) conversations->AuthorizeHistory(c.id);
         return turns->ConversationResult(request.request_id, c);
       }
       case A::RequestPayload::ConversationListRequest: {
@@ -702,11 +691,9 @@ struct Service::State {
         return tools->Handle(request, human, lock);
       case A::RequestPayload::ShowRequest:
         return Show(request, *r->value_as_ShowRequest(), human, lock);
-      case A::RequestPayload::AccessRequest:
-      case A::RequestPayload::AccessResolveRequest:
-      case A::RequestPayload::AccessRevokeRequest:
-      case A::RequestPayload::AccessListRequest:
-        return access->Handle(request, human);
+      case A::RequestPayload::DecisionResolveRequest:
+      case A::RequestPayload::DecisionListRequest:
+        return decisions->Handle(request, human);
       case A::RequestPayload::ConversationSummarizeRequest:
         return turns->Handle(request, human, lock);
       default:
@@ -810,12 +797,11 @@ struct Service::State {
               item->folder = folder;
               item->resource = "folder:" + ready.project_id + ":" +
                                crypto::sha256_hex(folder);
+              // Attaching a folder is the person giving the Agent read
+              // access to it.
               registry.AttachFolder(
                   ready.project_id, item->resource, folder,
                   std::filesystem::path(folder).filename().string());
-              // Attaching a folder is the person giving the Agent read
-              // access to it; the Agent does not ask again.
-              access->Grant(item->resource, S::Access::Read);
               result.folders.push_back(std::move(item));
             }
             transaction.commit();
@@ -832,16 +818,19 @@ struct Service::State {
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
       if (environment->action() == H::EnvironmentAction::RemoveFolders &&
           environment->folders()) {
+        // A removed folder is no longer offered to the Agent, even before
+        // the environment drops the share.
         for (const auto* folder : *environment->folders()) {
-          auto resource = db.prepare(
-              "SELECT f.id FROM folders f JOIN project_paths p ON "
-              "p.id=f.project WHERE p.path=? AND f.path=?");
-          resource
+          auto forget = db.prepare(
+              "DELETE FROM folders WHERE path=?2 AND project IN (SELECT id "
+              "FROM project_paths WHERE path=?1) RETURNING project");
+          forget
               .bind(1, std::filesystem::canonical(environment->project()->str())
                            .string())
               .bind(2, folder->str());
-          if (resource.step())
-            access->Revoke(resource.text(0), S::Access::Read);
+          while (forget.step())
+            for (const auto& [_, call] : tools->file_calls)
+              if (call.project == forget.text(0)) call.stop->request_stop();
         }
       }
       auto input =
@@ -917,11 +906,6 @@ struct Service::State {
         result.caches_json = host::LoadBinaryCaches(support);
       }
       return wire::HostReply(request.request_id, std::move(result));
-    }
-    if (r->value_type() == H::RequestPayload::ProjectPermissionsRequest ||
-        r->value_type() == H::RequestPayload::ProjectPermissionSetRequest) {
-      Human(human);
-      return access->HandleHost(*r, request.request_id);
     }
     if (host::Settings::Handles(r->value_type())) {
       Human(human);
@@ -1118,7 +1102,7 @@ auto Service::Shutdown() -> void {
       jobs.push_back(job.worker);
     }
   }
-  state_->access->changed.notify_all();
+  state_->decisions->changed.notify_all();
   if (state_->web) state_->web->Stop();
   if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();

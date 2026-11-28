@@ -3,7 +3,6 @@ import { agentAppearance } from '../model/agentAppearance'
 // project is open its own settings follow the app's (kept in the project).
 import { useEffect, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
-import { Access } from '../../shared/gen/tsugumi/service/access'
 import { hostCall } from '../wire/host'
 import { s } from '../wire/rpc'
 import { environmentHost } from '../wire/environment'
@@ -604,7 +603,6 @@ function APISettings() {
       <KeySection id="anthropic" s={s} reload={reload} update={update} />
       <KeySection id="openai" s={s} reload={reload} update={update} />
       <ChatGPTSettings onConnected={() => refreshChats(true)} onChanged={() => refreshChats()} model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
-      <ProjectPermissionSettings />
       <Section info={L('オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。')} title={L('ヘルパー')}>
         <Row label={L('範囲を指定しないヘルパーを許可する')}>
           <Toggle checked={s.allowUnscopedHelpers} onChange={(v) => update({ allowUnscopedHelpers: v })} />
@@ -612,7 +610,7 @@ function APISettings() {
       </Section>
       <Section title={L('Web 検索')} info={s.provider === 'fixture'
           ? L('ローカル fixture には検索がないため、オンでも使えません。')
-          : L('オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。')}>
+          : L('オフにすると、Agent は Web を検索しません。オンのあいだは、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。')}>
         <Row label={L('Agent が自分の判断で Web を検索する')}><Toggle checked={s.webSearch} onChange={(v) => update({ webSearch: v })} /></Row>
         <Row label={L('検索してよいドメイン')}><DomainList value={s.webSearchAllowedDomains ?? []} onChange={(v) => update({ webSearchAllowedDomains: v })} /></Row>
         <Row label={L('検索しないドメイン')}><DomainList value={s.webSearchBlockedDomains ?? []} onChange={(v) => update({ webSearchBlockedDomains: v })} /></Row>
@@ -724,41 +722,3 @@ function ConnectionSettings() {
   )
 }
 
-const permissionLabel = (access: Access) => {
-  const labels: Partial<Record<Access, string>> = {
-    [Access.Read]: L('内容の読み取り'), [Access.Write]: L('内容の変更'),
-    [Access.Run]: L('Card の実行'), [Access.Shell]: L('シェルコマンドの実行'),
-  }
-  return labels[access] ?? Access[access]
-}
-
-export function ProjectPermissionSettings() {
-  const [projects, setProjects] = useState<H.ProjectPermissionsT[]>([])
-  const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState(false)
-  const request = async (project?: H.ProjectPermissionsT, permission?: H.ProjectPermissionT, allow = false) => {
-    setBusy(true)
-    setError(undefined)
-    try {
-      const result = project && permission
-        ? await hostCall<H.ProjectPermissionListT>(H.RequestPayload.ProjectPermissionSetRequest,
-          new H.ProjectPermissionSetRequestT(project.projectId, permission.resourceId, permission.access, allow), H.ReplyPayload.ProjectPermissionList)
-        : await hostCall<H.ProjectPermissionListT>(H.RequestPayload.ProjectPermissionsRequest,
-          new H.ProjectPermissionsRequestT(), H.ReplyPayload.ProjectPermissionList)
-      setProjects(result.projects)
-    } catch (e) { setError(errorText(e)) }
-    finally { setBusy(false) }
-  }
-  useEffect(() => { void request() }, [])
-  return <Section info={L('プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。')} title={L('Agent のプロジェクト権限')}>
-    {projects.map(project => <div key={s(project.projectId)}>
-      <Row label={s(project.title || project.path || project.projectId)}><span className="caption secondary selectable">{s(project.path)}</span></Row>
-      {project.permissions.map(permission => <Row key={`${permission.resourceId}:${permission.access}`}
-        label={permission.resourceId === project.projectId ? permissionLabel(permission.access) : `${L('添付フォルダ')} · ${s(permission.title || permission.path)} · ${permissionLabel(permission.access)}`}>
-        <Toggle checked={permission.allowed} disabled={busy} onChange={allow => void request(project, permission, allow)} />
-      </Row>)}
-    </div>)}
-    {error && <Row><span className="error">{error}</span></Row>}
-    <Row><Button disabled={busy} onClick={() => void request()}>{L('更新')}</Button></Row>
-  </Section>
-}

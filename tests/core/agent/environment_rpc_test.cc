@@ -11,6 +11,7 @@
 
 #include "fixture.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/util/sqlite.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
@@ -380,7 +381,7 @@ TEST_F(EnvironmentFixture, FoldersCanBeWithdrawnAndOmittedVectorsMeanEmpty) {
   EXPECT_EQ(runtime.HostValue()->value_as_HostRuntime()->vm_state()->str(),
             "unavailable");
 }
-TEST_F(EnvironmentFixture, AttachingAFolderGrantsTheAgentReadAccessToIt) {
+TEST_F(EnvironmentFixture, AttachingAFolderOffersItToTheAgentUntilRemoved) {
   const auto folder = directory.path / "reference";
   std::filesystem::create_directory(folder);
   const auto reply =
@@ -395,21 +396,16 @@ TEST_F(EnvironmentFixture, AttachingAFolderGrantsTheAgentReadAccessToIt) {
   ASSERT_NE(attached, nullptr);
   ASSERT_EQ(attached->folders()->size(), 1u);
   const auto resource = attached->folders()->Get(0)->resource()->str();
-  const auto permissions = Call(
-      *host, H::RequestPayload::ProjectPermissionsRequest, [](Builder& b) {
-        return H::CreateProjectPermissionsRequest(b).Union();
-      });
-  const auto* list = permissions.HostValue()->value_as_ProjectPermissionList();
-  ASSERT_NE(list, nullptr);
-  bool found = false;
-  for (const auto* entry : *list->projects())
-    for (const auto* permission : *entry->permissions())
-      if (permission->resource_id()->str() == resource) {
-        found = true;
-        EXPECT_EQ(permission->access(), Tsugumi::Service::Access::Read);
-        EXPECT_TRUE(permission->allowed());
-      }
-  EXPECT_TRUE(found);
+  const auto registered = [&] {
+    sql::Db db((directory.path / "state/host.sqlite").string());
+    auto q = db.prepare("SELECT count(*) FROM folders WHERE id=?");
+    q.bind(1, resource);
+    q.step();
+    return q.i64(0);
+  };
+  EXPECT_EQ(registered(), 1);
+  Environment(H::EnvironmentAction::RemoveFolders, {folder.string()});
+  EXPECT_EQ(registered(), 0);
 }
 }  // namespace
 }  // namespace tsugumi::test

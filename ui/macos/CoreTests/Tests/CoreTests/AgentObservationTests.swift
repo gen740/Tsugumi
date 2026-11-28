@@ -32,7 +32,7 @@ struct AgentObservationTests {
         result.eventSeq = 41
         return result
       }
-      if method == "AccessListRequest" { return Tsugumi_Agent_AccessListT() }
+      if method == "DecisionListRequest" { return Tsugumi_Agent_DecisionListT() }
       guard method == "EventsRequest" else { throw RPCError.unexpectedReply(method) }
       cursors.append(fields["after_seq"] as? UInt64 ?? 0)
       polls += 1

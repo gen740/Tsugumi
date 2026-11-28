@@ -12,7 +12,7 @@
 #include "agent/tools.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
-#include "host/access.hh"
+#include "host/decisions.hh"
 #include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/failure.hh"
@@ -43,14 +43,12 @@ struct ConversationStoreTest : testing::Test {
         return store ? store->OpenedPath(project) : std::nullopt;
       }};
   std::unique_ptr<agent::ConversationStore> store;
-  bool allowed = true;
   bool busy = false;
 
   ConversationStoreTest() { Open(); }
   auto Open() -> void {
     store = std::make_unique<agent::ConversationStore>(
         gate, home.db, registry, [](std::string text) { return text; },
-        [this](const auto&, auto) { return allowed; },
         [this](const auto&) { return busy; });
   }
   auto Register(const std::string& project) -> std::filesystem::path {
@@ -96,13 +94,13 @@ TEST_F(ConversationStoreTest,
       R"({"profile":"desktop","provider_id":"fixture","model":"fixture"})");
   bool stopping = false;
   std::stop_source shutdown;
-  host::Access access(gate, home.db, registry, *store, stopping,
-                      {[](const auto&, const auto&) {}, [](const auto&) {}});
+  host::Decisions decisions(gate, home.db, registry, *store, stopping,
+                            {[](const auto&, const auto&) {}});
   agent::Turns::Dependencies turn_dependencies;
   turn_dependencies.scrub = [](std::string text) { return text; };
   turn_dependencies.event = [](const auto&, const auto&) {};
   agent::Turns turns(gate, home.db, *store, providers, settings, shutdown,
-                     stopping, access, std::move(turn_dependencies));
+                     stopping, std::move(turn_dependencies));
   host::DemoReferences demos(directory.path / "demos");
   std::unique_ptr<agent::Helpers> helpers;
   bool interrupt = true;
@@ -112,11 +110,10 @@ TEST_F(ConversationStoreTest,
   dependencies.event = [](const auto&, const auto&) {};
   dependencies.run_helper = [&](const auto& conversation, const auto& call,
                                 size_t task, const auto& spec,
-                                std::stop_token stop,
-                                const auto& authorization) {
+                                std::stop_token stop, bool direct) {
     ++children_started;
     const auto result =
-        helpers->RunHelper(conversation, call, task, spec, stop, authorization);
+        helpers->RunHelper(conversation, call, task, spec, stop, direct);
     // Inject the interruption at the exact durability boundary: the real
     // child's result is committed, but ExecuteTool has not returned it to the
     // parent's Runtime, so no tool_result can have been checkpointed there.
@@ -124,9 +121,9 @@ TEST_F(ConversationStoreTest,
     return result;
   };
   agent::Tools tools(gate, home.db, *store, providers, settings, demos, turns,
-                     shutdown, access, std::move(dependencies));
+                     shutdown, decisions, std::move(dependencies));
   helpers = std::make_unique<agent::Helpers>(
-      gate, *store, providers, settings, tools, turns, access,
+      gate, *store, providers, settings, tools, turns,
       agent::Helpers::Dependencies{[](std::string text) { return text; },
                                    [](const auto&, const auto&) {}});
   const auto parent = ::tsugumi::json::Object(
@@ -161,10 +158,10 @@ TEST_F(ConversationStoreTest,
   helpers.reset();
   Open();
   tools.conversations = store.get();
-  access.conversations = store.get();
+  decisions.conversations = store.get();
   turns.conversations = store.get();
   helpers = std::make_unique<agent::Helpers>(
-      gate, *store, providers, settings, tools, turns, access,
+      gate, *store, providers, settings, tools, turns,
       agent::Helpers::Dependencies{[](std::string text) { return text; },
                                    [](const auto&, const auto&) {}});
   messages = agent::ParseMessages(store->GetConversation("nested").messages);
@@ -298,16 +295,12 @@ TEST_F(ConversationStoreTest, TurnPreparationLoadsExclusionsWithoutTheGate) {
   Create("conversation", "project");
   home.db.exec(
       "INSERT INTO folders VALUES('a','project','/folder-a','a'),"
-      "('b','project','/folder-b','b');"
-      "INSERT INTO workspace_grants VALUES('allow-a','a',0,1),"
-      "('allow-b','b',0,1)");
+      "('b','project','/folder-b','b')");
   host::Credentials credentials{gate, home.db, {}};
   host::Settings settings(directory.path, credentials);
   agent::Providers providers(gate, home.db, settings);
   std::stop_source stop;
   bool stopping = false;
-  host::Access access(gate, home.db, registry, *store, stopping,
-                      {[](const auto&, const auto&) {}, [](const auto&) {}});
   int inspections = 0;
   agent::Turns::Dependencies dependencies;
   dependencies.exclusions = [&](const auto&, auto) {
@@ -319,7 +312,7 @@ TEST_F(ConversationStoreTest, TurnPreparationLoadsExclusionsWithoutTheGate) {
     return host::AgentExclude(project, R"({"agentExclude":[]})");
   };
   agent::Turns turns(gate, home.db, *store, providers, settings, stop, stopping,
-                     access, std::move(dependencies));
+                     std::move(dependencies));
   A::ConversationSendRequestT request;
   request.conversation_id = "conversation";
   request.turn_id = "prepare-fixture";
@@ -365,16 +358,6 @@ TEST_F(ConversationStoreTest,
                   [&](const auto& value) { return store->List(value, false); })
           .conversations.size(),
       1);
-  allowed = false;
-  EXPECT_THROW(store->AuthorizeHistory("external"), host::Failure);
-  EXPECT_TRUE(WithRequest(list, [&](const auto& value) {
-                return store->List(value, false);
-              }).conversations.empty());
-  EXPECT_THROW(WithRequest(events,
-                           [&](const auto& value) {
-                             return store->Events(value, false);
-                           }),
-               host::Failure);
   EXPECT_THROW(store->OwnConversation("owned", false), host::Failure);
 }
 TEST_F(ConversationStoreTest,
@@ -605,12 +588,13 @@ TEST_F(ConversationStoreTest, RecreatedFolderReplacesEvenAnOpenedIdentity) {
 }
 
 TEST_F(ConversationStoreTest,
-       DeletionPreservesProjectGrantsAndRemovesConversationProviders) {
+       DeletionRemovesConversationProvidersAndDecisions) {
   std::lock_guard lock(gate.mutex);
   Register("project");
   Create("conversation", "project");
   home.db.exec(
-      "INSERT INTO workspace_grants VALUES('grant','project',0,1);"
+      "INSERT INTO decisions VALUES('decision','project','conversation',"
+      "'call','digest','preview','pending');"
       "INSERT INTO providers VALUES('conversation','{}')");
   store->RecordEvent("conversation", R"({"kind":"finished"})");
   auto& project = store->ConversationDatabase("conversation");
@@ -619,9 +603,6 @@ TEST_F(ConversationStoreTest,
       "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
       "BEGIN SELECT RAISE(ABORT,'fixture'); END");
   EXPECT_THROW(store->Delete("conversation"), sql::Error);
-  auto grant =
-      home.db.prepare("SELECT 1 FROM workspace_grants WHERE project='project'");
-  EXPECT_TRUE(grant.step());
   auto provider = home.db.prepare(
       "SELECT 1 FROM providers WHERE conversation='conversation'");
   EXPECT_FALSE(provider.step());
@@ -996,25 +977,6 @@ TEST(AgentPresentation,
   ASSERT_EQ(conversation.rows[0]->children.size(), 1u);
   EXPECT_EQ(conversation.rows[0]->children[0]->result,
             "Paper — https://example.test/paper");
-}
-TEST(AgentPresentation, AccessGroupsKeepProjectChoicesAndRequiredOperation) {
-  const std::vector<std::string> asked{
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Read","needed_now":true})",
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Write","needed_now":false})",
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Run","needed_now":false})"};
-  auto groups = agent::AccessGroups(asked);
-  ASSERT_EQ(groups.size(), 1u);
-  ASSERT_EQ(groups[0]->lines.size(), 3u);
-  EXPECT_EQ(groups[0]->lines[0]->request, asked[0]);
-  EXPECT_TRUE(groups[0]->lines[0]->needed_now);
-  EXPECT_FALSE(groups[0]->lines[1]->needed_now);
-  EXPECT_FALSE(groups[0]->lines[2]->needed_now);
-  auto mixed = asked;
-  mixed.push_back(
-      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Shell"})");
-  groups = agent::AccessGroups(mixed);
-  ASSERT_EQ(groups.size(), 1u);
-  EXPECT_EQ(groups[0]->lines[3]->operation, "Shell");
 }
 TEST_F(ConversationStoreTest,
        LiveProjectionKeepsStreamingTextAcrossCheckpointsAndRestore) {

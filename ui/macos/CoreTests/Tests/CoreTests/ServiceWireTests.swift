@@ -42,8 +42,7 @@ final class ServiceWireTests: XCTestCase {
         let actual = try request(encoded), expected = try request(golden)
         XCTAssertEqual(actual.type, expected.type, method)
         switch (actual.value, expected.value) {
-        case (_ as Tsugumi_Host_DemoListRequestT, _ as Tsugumi_Host_DemoListRequestT),
-             (_ as Tsugumi_Host_ProjectPermissionsRequestT, _ as Tsugumi_Host_ProjectPermissionsRequestT):
+        case (_ as Tsugumi_Host_DemoListRequestT, _ as Tsugumi_Host_DemoListRequestT):
           break
         case let (a as Tsugumi_Host_DemoReadRequestT, b as Tsugumi_Host_DemoReadRequestT):
           XCTAssertEqual(a.path, b.path)
@@ -52,11 +51,6 @@ final class ServiceWireTests: XCTestCase {
           XCTAssertEqual(a.kind, b.kind)
           XCTAssertEqual(a.scope, b.scope)
           XCTAssertEqual(Set(a.occupied.compactMap { $0 }), Set(b.occupied.compactMap { $0 }))
-        case let (a as Tsugumi_Host_ProjectPermissionSetRequestT, b as Tsugumi_Host_ProjectPermissionSetRequestT):
-          XCTAssertEqual(a.projectId, b.projectId)
-          XCTAssertEqual(a.resourceId, b.resourceId)
-          XCTAssertEqual(a.access, b.access)
-          XCTAssertEqual(a.allow, b.allow)
         default:
           XCTFail("Unexpected Host request for \(method)")
         }
@@ -78,11 +72,9 @@ final class ServiceWireTests: XCTestCase {
           let provider = try XCTUnwrap(a.provider), expectedProvider = try XCTUnwrap(b.provider)
           XCTAssertEqual(provider.profile, expectedProvider.profile)
           XCTAssertEqual(provider.purpose, expectedProvider.purpose)
-        case let (a as Tsugumi_Agent_AccessRequestT, b as Tsugumi_Agent_AccessRequestT):
-          XCTAssertEqual(a.projectId, b.projectId)
-          XCTAssertEqual(a.conversationId, b.conversationId)
-          XCTAssertEqual(a.access, b.access)
-          XCTAssertEqual(a.reason, b.reason)
+        case let (a as Tsugumi_Agent_DecisionResolveRequestT, b as Tsugumi_Agent_DecisionResolveRequestT):
+          XCTAssertEqual(a.requestId, b.requestId)
+          XCTAssertEqual(a.allow, b.allow)
         default:
           XCTFail("Unexpected Agent request for \(method)")
         }
@@ -449,12 +441,12 @@ final class ServiceWireTests: XCTestCase {
 
   func testFailuresKeepTheApprovalRequestIdentity() throws {
     let failure = Tsugumi_Service_FailureT()
-    failure.code = "grant_required"
+    failure.code = "decision_required"
     failure.message = "Ask first"
     failure.requestId = "permission-1"
     failure.conversationLock = nil
     XCTAssertThrowsError(try ServiceWire.decode(reply(failure, type: .failure), host: false)) { error in
-      XCTAssertEqual((error as? CoreHostFailure)?.code, "grant_required")
+      XCTAssertEqual((error as? CoreHostFailure)?.code, "decision_required")
       XCTAssertEqual((error as? CoreHostFailure)?.requestID, "permission-1")
     }
   }

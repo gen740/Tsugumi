@@ -120,9 +120,7 @@ auto Save(const RuntimeHooks& hooks, const std::vector<Message>& messages)
 
 auto Authorize(const RuntimeHooks& hooks, const std::vector<Message>& messages)
     -> void {
-  if (!hooks.authorize_context)
-    throw std::runtime_error("Agent context authorization is not configured");
-  hooks.authorize_context(messages);
+  if (hooks.authorize_context) hooks.authorize_context(messages);
 }
 
 auto Sleep(std::chrono::milliseconds duration, std::stop_token stop) -> void {
@@ -368,8 +366,6 @@ auto ModelTurn(const ProviderConfig& config, std::string_view system,
 }
 
 auto ValidateHooks(const RuntimeHooks& hooks) -> void {
-  if (!hooks.authorize_context)
-    throw std::runtime_error("Agent context authorization is not configured");
   if (!hooks.checkpoint)
     throw std::runtime_error("Agent persistence is not configured");
 }

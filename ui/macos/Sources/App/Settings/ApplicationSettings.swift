@@ -592,7 +592,7 @@ private struct APISettings: View {
   @HostStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
   @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @HostStorage("agent.fixturePort") private var port = 8765
-  @HostStorage(AgentSettings.webSearchKey) private var webSearch = false
+  @HostStorage(AgentSettings.webSearchKey) private var webSearch = true
   @HostStorage("agent.webSearch.allowedDomains") private var searchAllowedDomains: [String] = []
   @HostStorage("agent.webSearch.blockedDomains") private var searchBlockedDomains: [String] = []
   @HostStorage("agent.allowUnscopedHelpers") private var allowUnscopedHelpers = false
@@ -618,7 +618,6 @@ private struct APISettings: View {
       APIKeySection(id: "anthropic", config: .anthropic, model: $anthropicModel)
       APIKeySection(id: "openai", config: .openAI, model: $openAIModel)
       ChatGPTSettings()
-      ProjectPermissionSettings()
       Section {
         Toggle("範囲を指定しないヘルパーを許可する", isOn: $allowUnscopedHelpers)
       } header: {
@@ -633,7 +632,7 @@ private struct APISettings: View {
       } header: {
         InfoHeader("Web 検索", info: provider == "fixture"
              ? Text("ローカル fixture には検索がないため、オンでも使えません。")
-             : Text("オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。"))
+             : Text("オフにすると、Agent は Web を検索しません。オンのあいだは、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。"))
       }
       Section {
         LabeledContent("状態", value: GuideController.shared.connected
@@ -1022,80 +1021,3 @@ private struct EnvironmentStorageSettings: View {
   }
 }
 
-/// The host supplies the project list and editable grants, including attached folders.
-private struct ProjectPermissionSettings: View {
-  @State private var projects: [PermissionProject] = []
-  @State private var error: String?
-  @State private var busy = false
-
-  private struct PermissionProject: Identifiable {
-    let id: String
-    let title: String
-    let path: String
-    let permissions: [Permission]
-  }
-  private struct Permission: Identifiable {
-    let resource: String
-    let title: String
-    let path: String
-    let access: String
-    let allowed: Bool
-    var id: String { resource + ":" + access }
-    var label: String {
-      switch access {
-      case "Read": return String(localized: "内容の読み取り")
-      case "Write": return String(localized: "内容の変更")
-      case "Run": return String(localized: "Card の実行")
-      case "Shell": return String(localized: "シェルコマンドの実行")
-      default: return access
-      }
-    }
-  }
-  var body: some View {
-    Section {
-      ForEach(projects) { project in
-        VStack(alignment: .leading) {
-          Text(project.title.isEmpty ? project.path : project.title).font(.headline)
-          Text(project.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-          ForEach(project.permissions) { permission in
-            Toggle(isOn: Binding(get: { permission.allowed }, set: { allow in
-              Task { await request(project: project, permission: permission, allow: allow) }
-            })) {
-              if permission.resource == project.id { Text(permission.label) }
-              else {
-                VStack(alignment: .leading) {
-                  Text("添付フォルダ · \(permission.title) · \(permission.label)")
-                  Text(permission.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-              }
-            }.disabled(busy)
-          }
-        }
-      }
-      if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-      Button("更新") { Task { await request() } }.disabled(busy)
-    } header: {
-      InfoHeader("Agent のプロジェクト権限", info: "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。")
-    }
-    .task { await request() }
-  }
-  @MainActor private func request(project: PermissionProject? = nil, permission: Permission? = nil, allow: Bool = false) async {
-    busy = true
-    error = nil
-    defer { busy = false }
-    do {
-      var fields: [String: Any] = [:]
-      if let project, let permission {
-        fields = ["project_id": project.id, "resource_id": permission.resource, "access": permission.access, "allow": allow]
-      }
-      let value = try await CoreHostClient.shared.call(project == nil ? "ProjectPermissionsRequest" : "ProjectPermissionSetRequest", fields)
-      projects = (value["projects"] as? [[String: Any]] ?? []).map { p in
-        PermissionProject(id: p["project_id"] as? String ?? "", title: p["title"] as? String ?? "", path: p["path"] as? String ?? "",
-          permissions: (p["permissions"] as? [[String: Any]] ?? []).map { v in
-            Permission(resource: v["resource_id"] as? String ?? "", title: v["title"] as? String ?? "", path: v["path"] as? String ?? "",
-              access: v["access"] as? String ?? "", allowed: v["allowed"] as? Bool ?? false)
-          })
-      }
-    } catch { self.error = error.localizedDescription }
-  }
-}

@@ -8,7 +8,6 @@
 #include "agent/providers.hh"
 #include "agent/text.hh"
 #include "agent/wire.hh"
-#include "host/access.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
@@ -57,7 +56,7 @@ auto Turns::System(bool guide) -> std::string {
 
 Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
              Providers& selections, host::Settings& settings,
-             std::stop_source& stop, bool& stopping, host::Access& access,
+             std::stop_source& stop, bool& stopping,
              Dependencies dependencies)
     : mutex(gate.mutex),
       db(database),
@@ -66,7 +65,6 @@ Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
       host_settings(&settings),
       shutdown(stop),
       stopping(stopping),
-      access_service(access),
       dependencies(std::move(dependencies)),
       preparation(gate.mutex, {database, store}) {}
 
@@ -186,10 +184,8 @@ auto Turns::SetRunWake(const std::string& id, bool on) -> void {
 auto Turns::Summarize(const ProviderConfig& config,
                       const std::string& instruction,
                       std::vector<Message> messages) -> std::string {
-  access_service.AuthorizeContext(messages);
   auto result = StreamReply(config, instruction, messages, {},
                             shutdown.get_token(), [](const ModelEvent&) {});
-  access_service.AuthorizeContext(messages);
   std::string text;
   for (const auto& block : result.message.content)
     if (block.type == "text") text += block.text;
@@ -278,8 +274,6 @@ auto Turns::SkillContent(const std::string& id,
                           "The user has not attached this Skill folder");
           return folder.text(0);
         });
-      access_service.Require(resource, id, S::Access::Read, true, stop,
-                             "Read the Skill " + skill->name);
       bytes = host::ReadSkill(in_project ? path : skill->source_folder,
                               skill->path);
       result.resource_ids.push_back(resource);
@@ -308,7 +302,7 @@ auto Turns::AutomaticSkills(const std::string& id, std::stop_token stop,
         auto with_skills = context;
         with_skills.push_back(
             {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
-        authorize(with_skills);
+        if (authorize) authorize(with_skills);
       };
   return text;
 }
@@ -334,13 +328,9 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
   const auto c = preparation.with([&](auto& state) {
     return state.conversations.GetConversation(p->conversation_id()->str());
   });
-  auto require = [&](const std::string& resource, const std::string& reason) {
-    access_service.Require(resource, c.id, S::Access::Read, true, stop, reason);
-  };
   std::vector<std::string> resources;
   if ((p->selected_cards() && p->selected_cards()->size()) ||
       (p->selected_displays() && p->selected_displays()->size())) {
-    require(c.project, "Use selected project references in the conversation");
     resources.push_back(c.project);
   }
   std::string text = p->text()->str();
@@ -380,7 +370,6 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
         exclusions = dependencies.exclusions(c.project, stop);
       if (exclusions && exclusions->Contains(path))
         throw Failure("not_found", "Folder not found");
-      require(resource->str(), "Read the attached folder");
       resources.push_back(resource->str());
       text += "\n[User-authorized attached folder] " + path;
     }
@@ -489,10 +478,7 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
                     "The pending Skill changed. Cancel and resend the message");
     approval_digest = current;
   }
-  if (approval_digest)
-    Human(human);
-  else
-    access_service.AuthorizeContext(messages);
+  if (approval_digest) Human(human);
   sql::Transaction tx(store);
   auto binding = store.prepare(
       "INSERT OR REPLACE INTO model_bindings VALUES(?,?,?,?,?)");
@@ -557,11 +543,9 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
               std::string final_state = "finished";
               try {
                 if (approval_digest) {
-                  const auto authorization = access_service.AuthorizeTurn(
-                      project, id, turn, *approval_digest, task, stop);
                   RecordOperation(id, "model");
-                  const auto result = json::Object(dependencies.run_helper(
-                      id, turn, 0, task, stop, authorization));
+                  const auto result = json::Object(
+                      dependencies.run_helper(id, turn, 0, task, stop, true));
                   if (stop.stop_requested()) throw Cancelled();
                   if (const auto error = json::Text(result, "error");
                       !error.empty())
@@ -661,8 +645,6 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
                   .bind(4, turn)
                   .run();
               tx.commit();
-              if (final_state == "cancelled")
-                access_service.CancelTurnApproval(id, turn);
               dependencies.event(id, R"({"kind":"finished"})");
               running.erase(id);
               if (dependencies.turn_ended) dependencies.turn_ended(id);
@@ -751,16 +733,13 @@ auto Turns::Handle(const RequestIn& request, bool human,
           r->value_as_ConversationCancelRequest()->conversation_id()->str();
       conversations->OwnConversation(id, human);
       auto& store = conversations->ConversationDatabase(id);
-      auto cancelled = store.prepare(
-          "UPDATE conversation_turns SET "
-          "state='cancelled',frame=NULL,message_index=NULL "
-          "WHERE conversation=? AND state IN ('running','interrupted') "
-          "RETURNING id");
-      cancelled.bind(1, id);
-      std::vector<std::string> cancelled_turns;
-      while (cancelled.step()) cancelled_turns.push_back(cancelled.text(0));
-      for (const auto& turn : cancelled_turns)
-        access_service.CancelTurnApproval(id, turn);
+      store
+          .prepare(
+              "UPDATE conversation_turns SET "
+              "state='cancelled',frame=NULL,message_index=NULL "
+              "WHERE conversation=? AND state IN ('running','interrupted')")
+          .bind(1, id)
+          .run();
       if (auto found = jobs.find(id); found != jobs.end())
         found->second.worker->request_stop();
       dependencies.cancel_file_tools(id);

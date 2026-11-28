@@ -6,13 +6,14 @@ Hostd owns Agent conversations, model connections and tool dispatch. See [permis
 
 Helpers have separate scratch and command/output directories, including unscoped helpers. A parent can hand a file to a helper by saving it in a Card included in that helper's `read_cards`; scratch is not shared. Cancelling before the durable save intent discards staged changes; once the journal intent is durable, recovery completes the atomic save.
 
-Use `project_copy` to transfer an explicit list of `{from,to}` files from an attached folder, another Card or the caller's private scratch into Card sources. The host moves bytes through the normal save; the model receives only paths, sizes and SHA-256 hashes. Attached sources need their own Read grant, Card sources need read scope, and destinations need write scope (helpers' exact sets apply). Links and traversal are refused. Copy and shell saves stream file bytes through private durable staging files and the normal journal; file contents do not cross the RPC frame or require a whole-file buffer. Document JSON remains limited to 8 MiB and the source manifest to 10,000 entries. For larger data, keep the folder attached and let a Card read it with a named `grants.hostPaths` entry, after approval.
+Use `project_copy` to transfer an explicit list of `{from,to}` files from an attached folder, another Card or the caller's private scratch into Card sources. The host moves bytes through the normal save; the model receives only paths, sizes and SHA-256 hashes. Attached sources must be folders the person attached, Card sources need read scope, and destinations need write scope (helpers' exact sets apply). Links and traversal are refused. Copy and shell saves stream file bytes through private durable staging files and the normal journal; file contents do not cross the RPC frame or require a whole-file buffer. Document JSON remains limited to 8 MiB and the source manifest to 10,000 entries. For larger data, keep the folder attached and let a Card read it with a named `grants.hostPaths` entry, after approval.
 
 `attached_folder_read` and Agent `project_file_read` return bounded pages: default 256 KiB, maximum 1 MiB, with total size and continuation offsets. A 200 MB attached file reads only the requested page. The UI can still fetch every page. Model-facing pages may be smaller to preserve valid JSON and correct continuation offsets within the tool-result budget. Use `project_copy` to move large files.
 
-Grant **Shell** separately from Read, Write and Run to use `project_shell`.
+`project_shell` needs no decision: it runs only where the project
+environment isolates it (the shared VM; other environments do not offer it).
 The command runs in a staged project-shaped working directory. It can read
-the scoped Card files and edit writable Cards' sources. Read-granted folders
+the scoped Card files and edit writable Cards' sources. Attached folders
 appear at `attached/<SHA-256(folder path)[0:16]>/` and private `scratch/`
 persists for the conversation or helper. Root `tsugumi.json`, `layout.bin`
 and each Card's `_card.json`, `README.md`, `_inputs.fbs` and
@@ -52,7 +53,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 | Guiding through a fixed procedure (Skills) | The built-in Skill `$demo` (`hostd/agent/Shared/demo-skill.md`) guides through a demo, and Skills the user adds are loaded too | [Skills and conversations](#skills-and-conversations), [the guide](#the-thrush-chat-and-guide) |
 | Showing work in progress | Tool arguments are received by streaming (`eager_input_streaming`), and the Card's code is shown on the Canvas as it is written | [The Agent on the Canvas](#the-agent-on-the-canvas), `hostd/agent/src/provider.cc` |
 | Making long work faster and cheaper | Prompt caching on the system prompt and the tool definitions | `hostd/agent/src/provider.cc` |
-| When up-to-date information is needed | The web search server tool (off by default; only when the user turns it on) | [Web search](#web-search) |
+| When up-to-date information is needed | The web search server tool (on by default; the user can turn it off) | [Web search](#web-search) |
 | Working with outside agents (MCP) | The Claude Code plugin hands Tsugumi's tools over as an MCP server, and the work appears in the Web UI. A save that widens a Card's permissions waits for a person's approval | [Using it from Claude Code](../claude-code.md), `test_claude_code_plugin.py` |
 | Guiding without an API key | A scripted guide that uses no model (`hostd/agent/Shared/guide-script.json`). Sends nothing anywhere and costs nothing | [The thrush's guide](#the-thrush-chat-and-guide) |
 
@@ -111,7 +112,7 @@ A Skill with front matter `scope: [read]`, `scope: [read, run]` or another inlin
 
 The bundled `$review` reads permissions alongside their apparent uses, sources of nondeterminism, resident-worker state and the build/run boundary. `$rerun-compare` reads and reruns selected Cards under the same conditions, comparing output content using the existing run comparison rules; incomplete retained data remains unknown. They contain natural-language instructions, with Japanese and English text, rather than language-specific analysers. Findings cite `card:outer/step?file=src%2Fmain.py&lines=12-18`, which opens those source lines, and state whether they were only read or run and observed. Keep individual findings with **Keep finding as comment**; those comments carry `finding: true` and are excluded from generation requests. Nothing rechecks, resolves or deletes them automatically. Each helper's trace remains expandable in the conversation after reconnecting.
 
-The host-side `tsugumi-hostd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and the Web UI keep folder selection, completion and menus; they send selected Skill names. For names supplied by Tsugumi, one Skill wins: the trusted project’s `skills/` folder, then the person’s registered folders (the last matching source wins), then the built-in Skill. Other duplicate names retain source order. The service reads contents beneath registered host roots only after Read access is granted. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
+The host-side `tsugumi-hostd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and the Web UI keep folder selection, completion and menus; they send selected Skill names. For names supplied by Tsugumi, one Skill wins: the trusted project’s `skills/` folder, then the person’s registered folders (the last matching source wins), then the built-in Skill. Other duplicate names retain source order. The service reads contents beneath the project or a folder the person attached. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
 
 `ModelsListRequest` reads or refreshes the service's persisted catalog for each connection. Both clients use its `name` display field. An empty refresh leaves the stored catalog intact; a failed refresh does not change it. Clients retain only a presentation snapshot for rendering an open menu.
 
@@ -154,11 +155,12 @@ The host records consumption across retries and checkpoints. Unscoped helpers
 still require the separate permission setting. Nested tasks appear under their
 parent in the host-authored conversation presentation.
 
-## Agent project permissions
+## What waits for the person
 
-Agent read, write, run and shell grants apply to the project across all conversations
-and helpers until revoked. Attached-folder read grants belong to that project too.
-Settings → API → Agent project permissions lists every registered project and its
-current grants; each permission can be granted or revoked there. The host validates
-and stores these decisions. Opening or deleting a conversation does not change them.
-Individual operation approvals and a helper's assigned Card scope remain separate.
+Asking the Agent to work on a project, or connecting an external agent over
+MCP, is the person's go-ahead: the Agent reads, changes and runs the project
+and uses its shell without a prompt. A few calls cross what the Agent's own
+tools could not do, and wait for one decision of the person each
+([permission boundary](security.md#the-agents-permission-boundary)). Attached
+folders are readable because the person attached them. A helper's assigned
+Card scope still limits what it can touch.

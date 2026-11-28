@@ -71,7 +71,6 @@ TEST_F(ConversationStoreFixture, FinalizationFailureLeavesTurnResumable) {
   Configure(model);
   StartProject();
   const auto conversation = Conversation("failed-finalization");
-  Grant(conversation);
   sql::Db db((directory.path / "project/.tsugumi/agent.sqlite").string());
   db.exec(R"(CREATE TRIGGER reject_turn_finish
              BEFORE UPDATE OF state ON conversation_turns
@@ -104,43 +103,6 @@ TEST_F(ConversationStoreFixture, FinalizationFailureLeavesTurnResumable) {
 }
 
 TEST_F(ConversationStoreFixture,
-       RevocationCancelsTurnsAfterConversationDeletion) {
-  ModelServer model;
-  Configure(model);
-  StartProject();
-  const auto finished = Conversation("delete-finished");
-  Grant(finished);
-  model.Queue(AnthropicText("Finished."));
-  ASSERT_TRUE(Send(finished, "Finish this turn.").Code().empty());
-  ASSERT_TRUE(model.WaitForRequests(1));
-  WaitUntilIdle(finished);
-
-  const auto active = Conversation("revoke-active");
-  model.Queue(AnthropicText("Held model response."), true);
-  ASSERT_TRUE(Send(active, "Wait for revocation.").Code().empty());
-  const bool started = model.WaitForRequests(2);
-  if (!started) model.Release();
-  ASSERT_TRUE(started);
-
-  const auto deleted = Delete(finished);
-  const auto revoked = Call(
-      *host, H::RequestPayload::ProjectPermissionSetRequest, [&](Builder& b) {
-        return H::CreateProjectPermissionSetRequest(
-                   b, b.CreateString(project_id), b.CreateString(project_id),
-                   Tsugumi::Service::Access::Read, false)
-            .Union();
-      });
-  model.Release();
-  ASSERT_TRUE(deleted.Code().empty());
-  ASSERT_TRUE(revoked.Code().empty()) << revoked.View();
-  WaitUntilIdle(active);
-  EXPECT_EQ(Scalar(directory.path / "project/.tsugumi/agent.sqlite",
-                   "SELECT count(*) FROM conversation_turns "
-                   "WHERE state='cancelled'"),
-            1);
-}
-
-TEST_F(ConversationStoreFixture,
        ProjectRecordsAndDeletionUseTheProjectDatabase) {
   ModelServer model;
   model.Queue(AnthropicText("HOME_RECORD"));
@@ -152,8 +114,6 @@ TEST_F(ConversationStoreFixture,
   WaitUntilIdle(home);
   StartProject();
   const auto conversation = Conversation("project-record");
-  ASSERT_EQ(Inspect(conversation).Code(), "grant_required");
-  Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   ASSERT_TRUE(Send(conversation, "PROJECT_RECORD FIXTURE_API_KEY " +
                                      JsonString(project_ready, "/token") + " " +
@@ -178,8 +138,8 @@ TEST_F(ConversationStoreFixture,
   }
   EXPECT_EQ(Scalar(local,
                    "SELECT count(*) FROM sqlite_master WHERE name IN "
-                   "('credentials','providers','workspace_grants','permission_"
-                   "requests','projects','folders','skill_catalogs')"),
+                   "('credentials','providers','decisions','projects','folders',"
+                   "'skill_catalogs')"),
             0);
   EXPECT_EQ(Scalar(host_db,
                    "SELECT count(*) FROM conversations WHERE "
@@ -199,7 +159,7 @@ TEST_F(ConversationStoreFixture,
     EXPECT_EQ(Scalar(local, "SELECT count(*) FROM " + std::string(table)), 0)
         << table;
   EXPECT_EQ(Scalar(host_db,
-                   "SELECT count(*) FROM permission_requests WHERE "
+                   "SELECT count(*) FROM decisions WHERE "
                    "conversation='project-record'"),
             0);
   EXPECT_NE(Get(home).View().find("HOME_RECORD"), std::string::npos);
@@ -218,7 +178,6 @@ TEST_F(ConversationStoreFixture,
   const auto home = Conversation("home-does-not-travel");
   StartProject();
   const auto conversation = Conversation("portable-history");
-  Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   for (int index = 0; index < 3; ++index) {
     ASSERT_TRUE(Send(conversation, "Keep this work.",
@@ -256,26 +215,15 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(Get(conversation, true).View(), before);
   EXPECT_EQ(Events(conversation, true).View(), events);
   EXPECT_EQ(Get(home, true).Code(), "not_found");
-  EXPECT_EQ(Get(conversation).Code(), "permission_denied");
-  const auto reopen = Call(
-      *external, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
-        return A::CreateConversationCreateRequest(
-                   b, b.CreateString(conversation), b.CreateString(project_id))
-            .Union();
-      });
-  EXPECT_EQ(reopen.Code(), "permission_denied");
+  // Decisions belong to the host that asked them; none travel with a copy.
   const auto access =
-      Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-        return A::CreateAccessListRequest(b, b.CreateString(conversation))
+      Call(*human, A::RequestPayload::DecisionListRequest, [&](Builder& b) {
+        return A::CreateDecisionListRequest(b, b.CreateString(conversation))
             .Union();
       });
   ASSERT_TRUE(access.Code().empty());
-  const auto* permissions = access.Value()->value_as_AccessList();
-  EXPECT_TRUE(!permissions->grants() || permissions->grants()->size() == 0);
-  EXPECT_TRUE(!permissions->requests() || permissions->requests()->size() == 0);
-  EXPECT_NE(events.find("permissionAnswered"), std::string::npos);
-  EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
-  Grant(conversation);
+  const auto* decisions = access.Value()->value_as_DecisionList()->decisions();
+  EXPECT_TRUE(!decisions || decisions->size() == 0);
   EXPECT_EQ(test::View(Get(conversation)
                            .Value()
                            ->value_as_ConversationResult()
@@ -381,7 +329,6 @@ TEST_F(ConversationStoreFixture,
   Configure(model);
   StartProject();
   const auto existing = Conversation("existing-healthy");
-  Grant(existing);
   StopAgent();
   const auto broken = directory.path / "broken";
   Write(broken / ".tsugumi/project-id", "broken");
@@ -407,7 +354,6 @@ TEST_F(ConversationStoreFixture,
   const auto conversation = Conversation("created-healthy");
   ASSERT_EQ(conversation, "created-healthy");
   EXPECT_NE(List(project_id).View().find(conversation), std::string::npos);
-  Grant(conversation);
   ASSERT_TRUE(
       Send(conversation, "Answer in the healthy project.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
@@ -448,59 +394,6 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(Scalar(root / "saved-state/agent.sqlite",
                    "SELECT count(*) FROM conversations"),
             1);
-}
-
-TEST_F(ConversationStoreFixture,
-       PendingMessagesArePortableRedactedAndNeverAutoResumed) {
-  ModelServer model;
-  Configure(model);
-  StartProject();
-  const auto conversation = Conversation("pending-portable");
-  const auto sent = Call(
-      *external, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
-        return A::CreateConversationSendRequest(
-                   b, b.CreateString(conversation),
-                   b.CreateString("pending-turn"),
-                   b.CreateString("Keep FIXTURE_API_KEY private"),
-                   b.CreateVector(std::vector{b.CreateString("selected-card")}))
-            .Union();
-      });
-  ASSERT_TRUE(sent.Code().empty());
-  // The pending permission is visible through EventsRequest reads only.
-  const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (Events(conversation).View().find("permission") == std::string::npos &&
-         std::chrono::steady_clock::now() < deadline)
-    std::this_thread::sleep_for(10ms);
-  ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
-  StopAgent();
-  project.Stop();
-  const auto local = directory.path / "project/.tsugumi/agent.sqlite";
-  EXPECT_EQ(
-      Scalar(
-          local,
-          "SELECT count(*) FROM conversation_turns WHERE frame IS NOT NULL AND "
-          "conversation='pending-portable'"),
-      1);
-  EXPECT_EQ(
-      Scalar(directory.path / "state/host.sqlite",
-             "SELECT count(*) FROM conversation_turns WHERE frame IS NOT NULL"),
-      0);
-  EXPECT_EQ(Read(local).find("FIXTURE_API_KEY"), std::string::npos);
-  const auto copy = directory.path / "pending-copy";
-  std::filesystem::copy(directory.path / "project", copy,
-                        std::filesystem::copy_options::recursive);
-  std::filesystem::remove_all(directory.path / "state");
-  StartHost();
-  ASSERT_TRUE(Register(copy, *host).Code().empty());
-  const auto snapshot = Get(conversation, true).View();
-  EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
-  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "preparing");
-  EXPECT_NE(snapshot.find("[redacted]"), std::string::npos);
-  EXPECT_TRUE(model.Requests().empty());
-  EXPECT_EQ(
-      Scalar(copy / ".tsugumi/agent.sqlite",
-             "SELECT count(*) FROM conversation_turns WHERE frame IS NOT NULL"),
-      1);
 }
 
 TEST_F(ConversationStoreFixture, AConversationCannotBeReboundToAnotherProject) {

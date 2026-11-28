@@ -6,7 +6,6 @@
 #include <set>
 #include <string>
 
-#include "host/authorization.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
@@ -20,13 +19,10 @@ class HelperScope {
  public:
   // Missing files return an empty string; transport/revision errors throw.
   using Reader = std::function<std::string(const std::string&)>;
-  explicit HelperScope(
-      const json::Members& task,
-      std::optional<host::TurnAuthorization> authorization = {},
-      std::string scratch_identity = {});
-  auto authorization() const -> const std::optional<host::TurnAuthorization>& {
-    return authorization_;
-  }
+  // direct: the person started this helper with a scoped Skill.
+  explicit HelperScope(const json::Members& task, bool direct = false,
+                       std::string scratch_identity = {});
+  auto direct() const -> bool { return direct_; }
   // This scope with reads widened by the Cards wired upstream of the assigned
   // Cards at the reader's revision. Methods taking a Reader apply it already.
   auto Reading(const Reader& read) const -> HelperScope;
@@ -77,7 +73,7 @@ class HelperScope {
   uint64_t depth_, count_;
   bool scoped_, widened_ = false;
   std::set<std::string> reads_, writes_, runs_;
-  std::optional<host::TurnAuthorization> authorization_;
+  bool direct_ = false;
   std::string scratch_identity_;
   std::map<std::string, std::string> runs_started_;
   std::map<std::string, std::string> created_;

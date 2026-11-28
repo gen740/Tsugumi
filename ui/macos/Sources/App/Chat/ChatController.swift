@@ -176,21 +176,10 @@ final class ChatController {
   func detach(folder path: String) {
     guard !attaching else { return }
     folders.removeAll { $0 == path }
-    let resource = folderResources.removeValue(forKey: path)
+    folderResources.removeValue(forKey: path)
     Task {
-      do {
-        if let resource {
-          var cursor: Int64 = 0
-          repeat {
-            let access = try await CoreHostClient.shared.call("AccessListRequest", ["project_id": session.projectId ?? "", "cursor": cursor])
-            for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
-              if let grantID = grant["id"] as? String { _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": grantID]) }
-            }
-            cursor = access["next_cursor"] as? Int64 ?? 0
-          } while cursor != 0
-        }
-        try await session.environments.removeFolders(session.identity, [path])
-      } catch { status = .error(error.localizedDescription) }
+      do { try await session.environments.removeFolders(session.identity, [path]) }
+      catch { status = .error(error.localizedDescription) }
     }
   }
   private(set) var interrupted = false
@@ -257,7 +246,9 @@ final class ChatController {
       Task { [weak self] in
         _ = await CoreHostClient.shared.observeHost { [weak self] event in
           guard event["type"] as? String == "ConversationChanged", let id = event["conversation"] as? String else { return }
-          Task { @MainActor [weak self] in self?.observeHostTurn(id) }
+          Task { @MainActor [weak self] in
+            if id.hasPrefix("external-") { self?.showExternalDecisions() } else { self?.observeHostTurn(id) }
+          }
         }
       }
     }
@@ -282,6 +273,7 @@ final class ChatController {
     Task {
       do {
         guard let project = try await RPCToolTransport(session: session).project() else { return }
+        showExternalDecisions(project.id)
         let value = try await CoreHostClient.shared.call("ConversationListRequest", ["project_id": project.id])
         sessions = (value["value"] as? [[String: Any]] ?? []).compactMap { item in
           guard let id = item["id"] as? String else { return nil }
@@ -328,7 +320,7 @@ final class ChatController {
     self.agent = agent
     modelBinding = nil
     // (the approver holds the controller weakly: the Agent outlives no window)
-    let approver: Agent.Approver = { [weak self] asked, groups, callId in await self?.approve(asked, groups: groups, callId: callId) ?? [] }
+    let approver: Agent.Approver = { [weak self] asked, callId in await self?.approve(asked, callId: callId) ?? [] }
     opening = Task {
       await previous?.detach()
       await agent.setApprover(approver)
@@ -577,18 +569,15 @@ final class ChatController {
 
   // MARK: - Card permissions
 
-  /// A save of the Agent waiting for the user: what it would give Cards.
+  /// A decision waiting for the user: what an Agent's call would do or give Cards.
   struct PermissionPrompt: Identifiable {
     let id = UUID()
     let raw: [String]
-    var groups: [Tsugumi_Agent_AccessGroupT] = []
     var callId: String?
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
     var operation: OperationApproval? { OperationApproval(raw) }
-    var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
     @MainActor var defaultSelection: Set<String> {
       Set(raw.filter { value in
-        if value.hasPrefix("project_access ") { return ProjectAccessLabel.neededNow(value) }
         if let request = CardPermission.Request(value) { return request.kind.known }
         return true
       })
@@ -612,9 +601,33 @@ final class ChatController {
 
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
-  func approve(_ asked: [String], groups: [Tsugumi_Agent_AccessGroupT] = [], callId: String? = nil) async -> Set<String> {
+  func approve(_ asked: [String], callId: String? = nil) async -> Set<String> {
     return await withCheckedContinuation { continuation in
-      permissionQueue.append(PermissionPrompt(raw: asked, groups: groups, callId: callId) { continuation.resume(returning: $0) })
+      permissionQueue.append(PermissionPrompt(raw: asked, callId: callId) { continuation.resume(returning: $0) })
+    }
+  }
+
+  /// Decisions an external agent (MCP) waits for on this project, including
+  /// ones asked while no window was open, are shown here like this chat's.
+  /// Closing the window releases the prompt without answering it.
+  @ObservationIgnored private var externalDecisions: [String: Task<Void, Never>] = [:]
+  func showExternalDecisions(_ projectId: String? = nil) {
+    guard let project = projectId ?? session.projectId else { return }
+    Task { [weak self] in
+      guard let listed = try? await CoreHostClient.shared.call("DecisionListRequest", ["project_id": project, "pending_only": true]) else { return }
+      for entry in listed["decisions"] as? [[String: Any]] ?? [] {
+        guard let self, let id = entry["id"] as? String, entry["state"] as? String == "pending",
+              (entry["conversation_id"] as? String)?.hasPrefix("external-") == true,
+              self.externalDecisions[id] == nil else { continue }
+        self.externalDecisions[id] = Task { @MainActor [weak self] in
+          guard let self else { return }
+          let answer = await self.approve(entry["asked"] as? [String] ?? [], callId: entry["call_id"] as? String)
+          if !Task.isCancelled {
+            _ = try? await CoreHostClient.shared.call("DecisionResolveRequest", ["request_id": id, "allow": !answer.isEmpty])
+          }
+          self.externalDecisions[id] = nil
+        }
+      }
     }
   }
 
@@ -640,6 +653,9 @@ final class ChatController {
   }
 
   private func releasePermissions() {
+    // An external agent's decision stays open for the next window.
+    for task in externalDecisions.values { task.cancel() }
+    externalDecisions.removeAll()
     permissionQueue.release()
   }
 
@@ -982,7 +998,7 @@ enum AgentSettings {
   }
 
   /// The chat's Agent may search the web through the provider (Settings > API;
-  /// off until the user turns it on: its queries leave for a search service).
+  /// on until the user turns it off: its queries leave for a search service).
   static let webSearchKey = "agent.webSearch"
 
   /// Where a connection keeps its chosen model.

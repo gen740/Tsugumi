@@ -7,8 +7,6 @@ TEST_F(AgentProjectFixture,
        PutCreatesMissingFilesAndKeepsExplicitExpectations) {
   StartProject();
   const auto conversation = Conversation("put-missing");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto root = directory.path / "project";
   const std::string create =
       R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}","expect_missing":true},{"file_path":"definitions/data/README.md","put":"---\ntitle: data\ndescription:\n---\n","expect_missing":true},{"file_path":"tsugumi.json","selector":[{"field":"canvas"},{"field":"cards"}],"old_value":{"present":true,"value":[]},"new_value":{"present":true,"value":[{"id":"data"}]}},{"file_path":"definitions/data/src/main.py","put":"original"}]})";
@@ -52,8 +50,6 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture, MalformedEditReportsTheFieldWithoutWriting) {
   StartProject();
   const auto conversation = Conversation("edit-decode");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto project = directory.path / "project/tsugumi.json";
   const auto before = Read(project);
   const auto reply =
@@ -83,8 +79,6 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan"}},{"from":{"card":"plan"},"to":{"card":"next"}}]}})");
   const auto conversation = Conversation("reference-draft-edit");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto reference = Read(std::filesystem::path(TSUGUMI_DEMOS_DIR) /
                               "reference/cards.md");
   const auto fence = reference.find("```json\n");
@@ -122,8 +116,6 @@ TEST_F(AgentProjectFixture,
        NarrowEditKeepsCanonicalProjectTextAndReplaysTheToolCall) {
   StartProject();
   const auto conversation = Conversation("atomic-edit");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto before = Read(directory.path / "project/tsugumi.json");
   const std::string args =
       R"({"edits":[{"file_path":"tsugumi.json","selector":[{"field":"name"}],"old_value":{"present":true,"value":"PRIVATE_PROJECT_SENTINEL"},"new_value":{"present":true,"value":"Renamed"}}]})";
@@ -159,8 +151,6 @@ TEST_F(AgentProjectFixture,
        NarrowFileEditCommitsTextReplacementAndGuardedMoveTogether) {
   StartProject();
   const auto conversation = Conversation("atomic-file-edit");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto created = Tool(
       conversation, "project_edit",
       R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}","expect_missing":true},{"file_path":"definitions/data/README.md","put":"---\ntitle: data\ndescription:\n---\n","expect_missing":true},{"file_path":"tsugumi.json","selector":[{"field":"canvas"},{"field":"cards"}],"old_value":{"present":true,"value":[]},"new_value":{"present":true,"value":[{"id":"data"}]}},{"file_path":"definitions/data/file.txt","put":"old text","expect_missing":true}]})",
@@ -257,8 +247,6 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"Graph","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
   const auto conversation = Conversation("transform");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   auto connected =
       Tool(conversation, "project_connect",
            R"({"from_card":"a","from_port":"","to_card":"b","to_port":""})",
@@ -300,16 +288,14 @@ TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
       false,
       R"({"name":"Permissions","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   const auto conversation = Conversation("permissions-edit");
-  Grant(conversation);
   const auto before = Read(directory.path / "project/definitions/a/_card.json");
   const std::string args =
       R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"grants"},{"field":"network"}],"old_value":{"present":true,"value":false},"new_value":{"present":true,"value":true}}]})";
   EXPECT_EQ(Tool(conversation, "project_edit", args, "without-write").Code(),
-            "grant_required");
+            "decision_required");
   EXPECT_EQ(Read(directory.path / "project/definitions/a/_card.json"), before);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto pending = Tool(conversation, "project_edit", args, "permission");
-  EXPECT_EQ(pending.Code(), "grant_required") << pending.View();
+  EXPECT_EQ(pending.Code(), "decision_required") << pending.View();
   EXPECT_EQ(Read(directory.path / "project/definitions/a/_card.json"), before);
 }
 }  // namespace

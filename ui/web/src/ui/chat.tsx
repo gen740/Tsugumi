@@ -11,7 +11,7 @@ import { useObserve } from '../model/observable'
 import { permissionCatalog, defaultPermissionSelection, operationSummary, parseOperationApproval, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
-import { AGENT, modelOptions, savedComments, helperScopeLabel, projectAccessNeededNow } from '../../shared/agentShared'
+import { AGENT, modelOptions, savedComments } from '../../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner } from './controls'
 import { Icon } from './icons'
@@ -22,7 +22,7 @@ import { ChatChoices, GuideNest } from './guide'
 import { guide } from '../model/guide'
 import { FolderPicker } from './sidebar'
 import { L, language } from '../i18n'
-import type { ChatRow, AccessGroup } from '../../shared/chatPresentation'
+import type { ChatRow } from '../../shared/chatPresentation'
 
 export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSession; chat: ChatController; detached: boolean; tab?: WorkflowTab }) {
   useObserve(chat, session, tab, prefs)
@@ -63,14 +63,14 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   const chat = app.chat(session)
   useObserve(chat)
   const p = chat.permission
-  return p ? <PermissionPrompt key={p.id} asked={p.asked} groups={p.groups} from={p.from} callId={p.call_id} onAnswer={(allow, selected) => chat.answerPermission(allow, p.id, selected)} /> : null
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} callId={p.call_id} onAnswer={(allow) => chat.answerPermission(allow, p.id)} /> : null
 }
 
-/** Presents core-owned access and operation requests.
+/** Presents a decision the core waits for, or a reload's widenings.
  *  Return allows and Esc declines. */
-export function PermissionPrompt({ asked, groups = [], from, callId, reload = false, onAnswer }: { asked: string[]; groups?: AccessGroup[]; from?: string; callId?: string; reload?: boolean; onAnswer: (allow: boolean, selected?: string[]) => void }) {
+export function PermissionPrompt({ asked, from, callId, reload = false, onAnswer }: { asked: string[]; from?: string; callId?: string; reload?: boolean; onAnswer: (allow: boolean, selected?: string[]) => void }) {
   const who = from ?? 'Agent'
-  const [selected, setSelected] = useState(() => defaultPermissionSelection(asked).filter(r => !r.startsWith('project_access ') || projectAccessNeededNow(r)))
+  const [selected, setSelected] = useState(() => defaultPermissionSelection(asked))
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       // A button with the focus answers for itself.
@@ -81,16 +81,14 @@ export function PermissionPrompt({ asked, groups = [], from, callId, reload = fa
     window.addEventListener('keydown', key, true)
     return () => window.removeEventListener('keydown', key, true)
   }, [onAnswer, selected])
-  const operation = asked.find((r) => r.startsWith('project_access operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
-  const access = asked.filter((r) => r.startsWith('project_access '))
+  const operation = asked.find((r) => r.startsWith('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   return (
     <Sheet width={460} onClose={() => onAnswer(false)} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
-        <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
-        {!groups.length && <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>}
+        <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
+        <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
         {callId && !operation && <p className="caption secondary mono">{callId}</p>}
-        <PermissionRequests asked={asked} groups={groups} callId={callId} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
-        {!!groups.length && <p className="secondary caption">{L('読み取った内容は接続先のモデルに送信される場合があります。')}</p>}
+        <PermissionRequests asked={asked} callId={callId} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
         <div className="row end gap8">
           <Button onClick={() => onAnswer(false)}>{L('許可しない')}</Button>
           <Button kind="prominent" onClick={() => onAnswer(true, selected)}>{L('許可する')}</Button>
@@ -101,12 +99,11 @@ export function PermissionPrompt({ asked, groups = [], from, callId, reload = fa
 }
 
 /** The exact widenings listed before approval, shared by reload and Agent saves. */
-export function PermissionRequests({ asked, groups = [], callId, selected, onSelect }: { asked: string[]; groups?: AccessGroup[]; callId?: string; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
+export function PermissionRequests({ asked, callId, selected, onSelect }: { asked: string[]; callId?: string; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
   useObserve(permissionCatalog)
   useEffect(() => { void permissionCatalog.load() }, [])
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
   const operation = parseOperationApproval(asked)
-  const access = asked.filter(r => r.startsWith('project_access '))
   return (
         <ul className="permission-list">
           {operation && <li className="operation-approval" style={{ display: 'block' }}>
@@ -116,18 +113,6 @@ export function PermissionRequests({ asked, groups = [], callId, selected, onSel
               <pre className="caption mono selectable" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 300, overflow: 'auto' }}>{(callId ? callId + '\n' : '') + operation.detail}</pre>
             </details>
           </li>}
-          {!operation && groups.map((g, i) => <li key={i} style={{ display: 'block' }}>
-            <strong>{g.title}</strong>
-            <div className="caption secondary" title={g.path}>{g.displayPath} · {L('プロジェクト全体・取り消すまで')}</div>
-            {g.lines.map(line => <label key={line.request} style={{ display: 'flex', alignItems: 'baseline', gap: 8, whiteSpace: 'normal', marginTop: 6 }}>
-              {onSelect && <input type="checkbox" checked={selected?.includes(line.request) ?? false} onChange={e => onSelect(line.request, e.target.checked)} />}
-              <span>{accessOperation(line.operation)}</span>
-              {line.neededNow && <span className="secondary caption">{L('今の操作に必要')}</span>}
-            </label>)}
-          </li>)}
-          {!operation && access.filter(r => !groups.some(g => g.lines.some(l => l.request === r))).map(r => <li key={r}>
-            <label style={{ whiteSpace: 'pre-wrap' }}>{onSelect && <input type="checkbox" checked={selected?.includes(r) ?? false} onChange={e => onSelect(r, e.target.checked)} />}{helperScopeLabel(r)}</label>
-          </li>)}
           {requests.map((r) => (
             <li key={r.raw}>
               {onSelect && <input type="checkbox" aria-label={`${r.card}: ${permissionInfo(r.kind).label}`} checked={selected?.includes(r.raw) ?? false}
@@ -598,10 +583,6 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
   return { card, running: running + t + '…', done: done + t }
 }
 
-function accessOperation(name: string): string {
-  return name === 'Read' ? L('内容の読み取り') : name === 'Write' ? L('内容の変更') : name === 'Run' ? L('Card の実行')
-    : name === 'CardPermissions' ? L('Card の権限の変更') : name === 'Shell' ? L('シェルコマンドの実行') : name
-}
 function taskState(state: string): string {
   return state === 'queued' ? L('待機中') : state === 'running' ? L('作業中') : state === 'completed' ? L('終わりました') : state === 'interrupted' ? L('止めました') : L('失敗')
 }

@@ -67,11 +67,11 @@ class AgentProjectFixture : public AgentFixture {
                     const std::string& arguments) -> Reply {
     const auto id = "approved-" + name;
     const auto pending = Tool(conversation, name, arguments, id);
-    if (pending.Code() != "grant_required" || pending.RequestId().empty())
+    if (pending.Code() != "decision_required" || pending.RequestId().empty())
       throw std::runtime_error("expected a per-call approval for " + name);
     const auto resolved =
-        Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
-          return A::CreateAccessResolveRequest(
+        Call(*human, A::RequestPayload::DecisionResolveRequest, [&](Builder& b) {
+          return A::CreateDecisionResolveRequest(
                      b, b.CreateString(pending.RequestId()), true)
               .Union();
         });

@@ -46,8 +46,9 @@ struct RuntimeHooks {
   std::function<std::string()> allocate_call;
   std::function<ToolResult(const ToolCall&, std::stop_token)> execute_tool;
   std::function<void(const RuntimeEvent&)> event;
-  // Called before a model request, including retries and compaction. Throws
-  // when a resource's grant is absent or was revoked. Required by Run().
+  // Called before a model request, including retries and compaction, when
+  // set. Throws when content may no longer be sent (a Skill whose project
+  // trust was revoked).
   std::function<void(const std::vector<Message>&)> authorize_context;
   // Persist complete messages before executing any tool, and after each
   // result. This callback must throw on a failed commit.

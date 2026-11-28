@@ -246,29 +246,30 @@ import TsugumiTestSupport
       ])
     }
     try await withFixture { _ in
-      try await setSearch(true, on: shared)
-      try await until("preferences display the edited setting") { preferences.bool(forKey: "agent.webSearch") }
+      // Web search is on by default, so each edit turns it off first.
+      try await setSearch(false, on: shared)
+      try await until("preferences display the edited setting") { !preferences.bool(forKey: "agent.webSearch") }
       await shared.disconnect()
       let editor = CoreHostClient()
-      try await setSearch(false, on: editor)
+      try await setSearch(true, on: editor)
       await editor.disconnect()
       _ = try await shared.call("SettingsGetRequest", ["profile": "desktop"])
-      try await until("preferences display the edit made while disconnected") { !preferences.bool(forKey: "agent.webSearch") }
-      try await setSearch(true, on: shared)
-      try await until("preferences display the previous host's final revision") { preferences.bool(forKey: "agent.webSearch") }
+      try await until("preferences display the edit made while disconnected") { preferences.bool(forKey: "agent.webSearch") }
+      try await setSearch(false, on: shared)
+      try await until("preferences display the previous host's final revision") { !preferences.bool(forKey: "agent.webSearch") }
       let stale = try await readRevision(shared)
       try await withFixture { _ in
-        try await until("preferences display the fresh host's lower revision") { !preferences.bool(forKey: "agent.webSearch") }
-        for enabled in [false, true, false] { try await setSearch(enabled, on: shared) }
+        try await until("preferences display the fresh host's lower revision") { preferences.bool(forKey: "agent.webSearch") }
+        for enabled in [true, false, true] { try await setSearch(enabled, on: shared) }
         do {
-          try await setSearch(true, on: shared, expected: stale)
+          try await setSearch(false, on: shared, expected: stale)
           Issue.record("Accepted an edit from the previous store")
         } catch let failure as CoreHostFailure {
           #expect(failure.code == "conflict")
         }
         let current = try await shared.call("SettingsGetRequest", ["profile": "desktop"])
         let values = try #require(current["values"] as? [[String: String]])
-        #expect(values.first { $0["key"] == "agent.webSearch" }?["value_json"] == "false")
+        #expect(values.first { $0["key"] == "agent.webSearch" }?["value_json"] == "true")
       }
     }
   }
@@ -354,14 +355,7 @@ import TsugumiTestSupport
       let resources = paths.map { path in
         "folder:\(project):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
       }
-      // The backend requires an independent read grant for each folder before
-      // building a message. The Agent RPC tests exercise granting and revocation.
-      for resource in [project] + resources {
-        let access = try await CoreHostClient.shared.call("AccessRequest", ["project_id": resource,
-          "conversation_id": t.conversationID, "access": "Read", "reason": "Fixture attachment"])
-        let id = try #require(access["id"] as? String)
-        _ = try await CoreHostClient.shared.call("AccessResolveRequest", ["request_id": id, "allow": true])
-      }
+      // Attaching is the person's decision: the message needs nothing more.
       chat.send("hello from both attached folders")
       try await until("the message with both attachments ended") { chat.failed || (!chat.busy && reply(chat, after: 0)) }
       try #require(!chat.failed, "\(chat.status?.message ?? "")")

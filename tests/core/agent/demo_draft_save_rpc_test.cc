@@ -23,8 +23,6 @@ TEST_F(AgentProjectFixture,
   StartProject(false, document, "{}");
   const auto saved_layout = Read(root / "layout.bin");
   const auto conversation = Conversation("gw150914-generate-cards");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));

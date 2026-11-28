@@ -14,8 +14,6 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-notes");
-  Grant(conversation, Tsugumi::Service::Access::Read);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   const auto initialized = ApprovedTool(conversation, "version_init", "{}");
   ASSERT_TRUE(initialized.Code().empty());
   const auto first =
@@ -76,8 +74,6 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("host-presentation");
-  Grant(conversation, Tsugumi::Service::Access::Read);
-  Grant(conversation, Tsugumi::Service::Access::Write);
   ASSERT_TRUE(ApprovedTool(conversation, "version_init", "{}").Code().empty());
   for (const auto& [language, expected] :
        std::vector<std::pair<std::string, std::string>>{

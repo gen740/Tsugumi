@@ -4,9 +4,9 @@
 namespace tsugumi::cli {
 // Claude Code keeps only 4096 characters of initialize.instructions. The
 // first open carries the complete shared rules without that truncation.
-inline constexpr const char* kInitialInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in the Tsugumi web UI, where the person watches each save and run. Project grants apply to every conversation and helper until revoked; attached-folder grants belong to that project too. Project content is unavailable until the person grants access. Request access through the Agent API and wait for their answer. The plugin cannot grant itself access or approve Card permissions. When a call returns grant_required, wait for the person to answer in the page, then retry the same tool with the same arguments.
+inline constexpr const char* kInitialInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in Tsugumi (the app or the web UI), where the person watches each save and run. Connecting this plugin is the person's go-ahead: you can read, change and run the open project and use its shell. Folders the person attached in the chat are readable too. A few calls wait for the person: a save that gives Cards network, host folders, a host secret or looser isolation, and the per-call acts on run data, versions, locks and Host templates. Such a call returns decision_required naming what waits; the request stays open in the Tsugumi app and web UI until the person answers, also when one opens later. Then call the same tool again with the same arguments.
 )TSUGUMI";
-inline constexpr const char* kInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in the Tsugumi web UI, where the person watches each save and run. Project grants apply to every conversation and helper until revoked; attached-folder grants belong to that project too. Project content is unavailable until the person grants access. Request access through the Agent API and wait for their answer. The plugin cannot grant itself access or approve Card permissions. When a call returns grant_required, wait for the person to answer in the page, then retry the same tool with the same arguments.
+inline constexpr const char* kInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in Tsugumi (the app or the web UI), where the person watches each save and run. Connecting this plugin is the person's go-ahead: you can read, change and run the open project and use its shell. Folders the person attached in the chat are readable too. A few calls wait for the person: a save that gives Cards network, host folders, a host secret or looser isolation, and the per-call acts on run data, versions, locks and Host templates. Such a call returns decision_required naming what waits; the request stays open in the Tsugumi app and web UI until the person answers, also when one opens later. Then call the same tool again with the same arguments.
 
 You operate Tsugumi, a Card graph tool, through its core RPC tools. A project divides processing into Cards a
 person can see through: each Card shows what went in, what it did and what came out, and a person can change a
@@ -76,7 +76,7 @@ the person's decision.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- The person decides a Card's sandbox and grants. A save that widens access waits for their approval, with your reason. A declined
+- The person decides a Card's sandbox, grants and secrets. A save that widens them waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
   may include a boundary with inputs and outputs, both lists of {name, card, port}. Use project_edit on files
@@ -97,7 +97,7 @@ the person's decision.
   It reads what the actual build
   target recorded for the run. A shell can have a different Nix store from the Card's build target.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
-  its Skills, while access and permission grants still apply.
+  its Skills.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
   Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
   and version changes wait for the person's approval of each call. For a trial the person describes without its run,

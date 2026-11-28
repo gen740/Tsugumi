@@ -129,7 +129,7 @@ Turn on **Draw thoughts** below the chat input for model-written activity summar
 
 ### Skills and conversations
 
-Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to open or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](design/security.md#web-search)
+Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to open or compact a conversation. **Web search** under **API** is on by default; turn it off when the provider should receive no search terms. [Search and privacy](design/security.md#web-search)
 
 Project conversations are saved in `.tsugumi/agent.sqlite`, outside git, alongside the project's run records. Copy the whole project folder, including `.tsugumi/`, to keep what the Agent said and did and the records linked in its replies. Stop the Agent service before copying. Home conversations stay on the host. API keys, provider settings and access grants stay on the host too: approve project and attached-folder access again on another machine. The Mac app, Web UI and plugin use the same Agent service. Open a copied project to see its saved chats in the conversation list. Deleting a conversation removes it from its project. Resetting host state keeps project conversations. [Storage and deletion](design/security.md#8-where-data-is-kept-and-how-to-delete-it)
 

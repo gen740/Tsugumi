@@ -8,7 +8,7 @@
 #include "../agent_fixture_server.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
-#include "host/access.hh"
+#include "host/decisions.hh"
 #include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/failure.hh"
@@ -29,8 +29,7 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   ASSERT_TRUE(journal.step());
   EXPECT_EQ(journal.text(0), "wal");
   for (const auto* table :
-       {"projects", "folders", "permission_requests", "workspace_grants",
-        "providers", "credentials", "environment_projects", "project_paths",
+       {"projects", "folders", "decisions", "providers", "credentials", "environment_projects", "project_paths",
         "skill_catalogs", "conversation_locations", "model_lists",
         "setting_values", "settings_revision", "accounts",
         "provider_connections", "oauth_hosts"}) {
@@ -82,56 +81,50 @@ TEST(HostComponents, LargeApprovalListsPageWithinTheRpcFrame) {
                                  [](const auto&) { return std::nullopt; });
   agent::ConversationStore conversations(
       gate, store.db, registry, [](auto value) { return value; },
-      [](const auto&, auto) { return false; },
       [](const auto&) { return false; });
   bool stopping = false;
-  host::Access access(
-      gate, store.db, registry, conversations, stopping,
-      {[](const auto&, const auto&) {}, [](const auto&) {}});
+  host::Decisions decisions(gate, store.db, registry, conversations, stopping,
+                            {[](const auto&, const auto&) {}});
   std::lock_guard lock(gate.mutex);
   store.db.exec(
       "WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids "
       "WHERE n<501) INSERT INTO "
-      "permission_requests(id,project,conversation,access,reason,state) "
-      "SELECT n,'project','conversation',0,'old request','allowed' FROM ids;"
-      "INSERT INTO conversation_locations VALUES('missing','other');");
-  const auto missing_approval =
-      access.RequestApproval(host::ApprovalKind::Turn, "other", "missing",
-                             "turn", "digest", "secret scope");
+      "decisions(id,project,conversation,call,digest,preview,state) "
+      "SELECT n,'project','conversation',n,'digest','old request','allowed' "
+      "FROM ids;");
   const std::string preview(480 * 1024, 'p');
   for (int i = 0; i < 40; ++i) {
-    const auto approval = access.RequestApproval(
-        host::ApprovalKind::Operation, "project", "conversation",
-        "large-call-" + std::to_string(i), "digest", preview);
+    const auto decision =
+        decisions.Request("project", "conversation",
+                          "large-call-" + std::to_string(i), "digest", preview);
     if (i == 0) {
-      auto answer = store.db.prepare(
-          "UPDATE permission_requests SET state='allowed' WHERE id=?");
-      answer.bind(1, approval.id).run();
+      auto answer =
+          store.db.prepare("UPDATE decisions SET state='allowed' WHERE id=?");
+      answer.bind(1, decision.id).run();
     }
   }
-  const auto recent = access.RequestApproval(
-      host::ApprovalKind::Operation, "project", "conversation",
-      "operation-call", "digest", "preview");
-  const auto list = [&](A::AccessListRequestT value) {
+  const auto recent = decisions.Request("project", "conversation",
+                                        "operation-call", "digest", "preview");
+  const auto list = [&](A::DecisionListRequestT value) {
     flatbuffers::FlatBufferBuilder b;
     const auto request =
-        A::CreateRequest(b, A::RequestPayload::AccessListRequest,
-                         A::AccessListRequest::Pack(b, &value).Union());
+        A::CreateRequest(b, A::RequestPayload::DecisionListRequest,
+                         A::DecisionListRequest::Pack(b, &value).Union());
     A::FinishMessageBuffer(
         b, A::CreateMessage(b, 1, A::Payload::Request, request.Union()));
     RequestIn in;
     in.request_id = 1;
     in.frame = std::make_shared<const std::string>(
         reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
-    return access.Handle(in, true);
+    return decisions.Handle(in, true);
   };
   const auto parse = [](const std::string& reply) {
     return A::GetMessage(reply.data())
         ->payload_as_Reply()
-        ->value_as_AccessList();
+        ->value_as_DecisionList();
   };
   for (const bool pending_only : {false, true}) {
-    A::AccessListRequestT filter;
+    A::DecisionListRequestT filter;
     filter.project_id = "project";
     filter.pending_only = pending_only;
     std::set<std::string> ids;
@@ -141,8 +134,8 @@ TEST(HostComponents, LargeApprovalListsPageWithinTheRpcFrame) {
       EXPECT_LE(reply.size(), TransportLimits{}.max_frame_bytes);
       const auto* page = parse(reply);
       ASSERT_NE(page, nullptr);
-      ASSERT_NE(page->requests(), nullptr);
-      for (const auto* entry : *page->requests()) {
+      ASSERT_NE(page->decisions(), nullptr);
+      for (const auto* entry : *page->decisions()) {
         EXPECT_TRUE(ids.insert(entry->id()->str()).second);
         EXPECT_EQ(entry->project_id()->str(), "project");
         if (pending_only) EXPECT_EQ(entry->state()->str(), "pending");
@@ -154,21 +147,39 @@ TEST(HostComponents, LargeApprovalListsPageWithinTheRpcFrame) {
     EXPECT_EQ(ids.size(), pending_only ? 40u : 542u);
     EXPECT_TRUE(ids.contains(recent.id));
   }
-  A::AccessListRequestT filter;
+  A::DecisionListRequestT filter;
   filter.request_id = recent.id;
   const auto exact = list(filter);
   const auto* listed = parse(exact);
-  ASSERT_EQ(listed->requests()->size(), 1u);
-  EXPECT_EQ(listed->requests()->Get(0)->call_id()->str(), "operation-call");
+  ASSERT_EQ(listed->decisions()->size(), 1u);
+  EXPECT_EQ(listed->decisions()->Get(0)->call_id()->str(), "operation-call");
 
   const auto global = list({});
   EXPECT_NE(parse(global)->next_cursor(), 0);
-  filter.request_id = missing_approval.id;
-  const auto missing = list(filter);
-  ASSERT_EQ(parse(missing)->requests()->size(), 1u);
-  const auto* unavailable = parse(missing)->requests()->Get(0);
-  EXPECT_EQ(unavailable->state()->str(), "unavailable");
-  EXPECT_GT(unavailable->unavailable_reason()->size(), 0u);
+  // What waits is named for an agent without a UI.
+  std::unique_lock wait(gate.mutex);
+  try {
+    decisions.Wait(wait, recent.id, false, {});
+    ADD_FAILURE() << "A pending decision did not wait";
+  } catch (const host::Failure& failure) {
+    EXPECT_EQ(failure.code, "decision_required");
+    EXPECT_EQ(failure.request_id, recent.id);
+    EXPECT_NE(std::string(failure.what()).find("approval in Tsugumi: preview"),
+              std::string::npos)
+        << failure.what();
+  }
+}
+
+TEST(HostComponents, DecisionSummaryNamesWhatWaits) {
+  EXPECT_EQ(host::Decisions::Summary(
+                "project_save\n{\"project\":\"p\",\"permissions\":"
+                "[\"network fetch\",\"secret fetch token\"]}"),
+            "project_save gives Cards: network fetch, secret fetch token");
+  EXPECT_EQ(host::Decisions::Summary(
+                "project_cache_clear\n{\"removes\":\"Build roots\"}\n"
+                "Proposed arguments: {}"),
+            "project_cache_clear: Build roots");
+  EXPECT_EQ(host::Decisions::Summary("version_init"), "version_init");
 }
 
 TEST(HostComponents, RetiringUnlinkedOAuthCredentialsKeepsCurrentAccounts) {

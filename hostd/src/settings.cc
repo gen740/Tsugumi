@@ -275,7 +275,7 @@ auto Defaults() -> j::Members {
           {"agent.fixturePort", "8765"},
           {"agent.effort", j::Quote("")},
           {"agent.fastModel", j::Quote("")},
-          {"agent.webSearch", "false"},
+          {"agent.webSearch", "true"},
           {"agent.webSearch.allowedDomains", "[]"},
           {"agent.webSearch.blockedDomains", "[]"},
           {"agent.animateWork", "true"},

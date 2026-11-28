@@ -12,10 +12,10 @@ Claude Code ── MCP (stdio) ── tsugumi mcp ── Agent RPC (external) �
                                                                        └─ Web UI ── browser (Canvas, thrush, approvals)
 ```
 
-- The MCP server (`tsugumi mcp`, `cli/src/mcp.cc`) calls `tsugumi-hostd` on its Agent socket as the external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
+- The MCP server (`tsugumi mcp`, `cli/src/mcp.cc`) calls `tsugumi-hostd` on its Agent socket as the external-agent principal. The service validates tool arguments, applies saves with `origin: agent` and follows runs through the project RPC.
 - Agent events and project notifications let the app and the Web UI show the work and run progress. A model key in Tsugumi is not required for Claude Code to use the tools.
-- Read, Write and Run access and permission-widening saves can require a user decision. Keep a Web UI page open to answer pending access requests. A disconnected page does not cancel a core conversation. [Agent permission boundary](design/security.md#the-agents-permission-boundary)
-- The MCP server exposes hostd's tool catalog and Agent API operations prefixed with `agent_` (described from the embedded `agent.bfbs`, `cli/src/agent_catalog.cc`). Use the Agent API to request project access before inspecting it. Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
+- Connecting the plugin is your go-ahead: Claude Code reads, changes and runs the open project and uses its shell without a prompt. A save that widens a Card's permissions (network, host folders, a host-kept secret, looser isolation) and the per-call acts on run data, versions, locks and Host templates wait for your decision. The call returns `decision_required` naming what waits; the request stays open and the app or the Web UI shows it on the project, also when one opens later. A disconnected page does not cancel a core conversation. [Agent permission boundary](design/security.md#the-agents-permission-boundary)
+- The MCP server exposes hostd's tool catalog and Agent API operations prefixed with `agent_` (described from the embedded `agent.bfbs`, `cli/src/agent_catalog.cc`). Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
 
 ## Setup
 
@@ -75,6 +75,6 @@ Cards run in the environment of the host `tsugumi_open` reached: inside the shar
 The plugin uses core's project-tool allow list in `hostd/agent/Shared/agent.json`,
 shared with the built-in Agent. Run history deletion, cache clearing, version
 checkout and summary replacement remain explicit UI actions. `project_shell`
-requires a separate Shell grant and reads the project without write access;
+runs in the project's VM workspace and reads the project without write access;
 use `project_save` for edits and Cards for analysis. External reloads require
 the user's approval for every Card permission widening, regardless of origin.
